@@ -148,7 +148,7 @@ void ht_remove(struct ht *ht,void *k)
 void ht_free(struct ht *ht)
 {
 	if(ht->key_type==INTEGER){
-		int i;
+		size_t i;
 		for(i=0;i<ht->cap;i++){
 			struct ht_node *cur,*nxt;
 			cur=ht->nodes[i];

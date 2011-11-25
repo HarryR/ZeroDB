@@ -38,6 +38,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <assert.h>
+#include <inttypes.h>
 #ifdef _WIN32
 #include <direct.h>
 #endif
@@ -182,11 +183,11 @@ void db_info(nessDB *db, char *infos)
 	memset(str,0,256);
 	snprintf(str,sizeof str,
 			"	new-level-lru: count:<%d>;"
-			"allow-size:<%llu>bytes;"
-			"used-size:<%llu>bytes\n"
+			"allow-size:<%" PRIu64 ">bytes;"
+			"used-size:<%" PRIu64 ">bytes\n"
 			"	old-level-lru: count:<%d>;"
-			"allow-size:<%llu>bytes;"
-			"used-size:<%llu>bytes\n",
+			"allow-size:<%" PRIu64 ">bytes;"
+			"used-size:<%" PRIu64 ">bytes\n",
 			
 			linfo.nl_count,
 				linfo.nl_allowsize,
