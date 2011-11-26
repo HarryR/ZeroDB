@@ -6,7 +6,7 @@ else
 endif
 
 CC = gcc
-CFLAGS =  -c -std=c99 -Wall -Wextra -pedantic $(DEBUG)	
+CFLAGS =  -c -std=c99 -O3 -Wall -Wextra -pedantic $(DEBUG)	
 
 LIB_OBJS = \
 	./engine/ht.o \
@@ -25,7 +25,7 @@ SVR_OBJS = \
 
 LIBRARY = libnessdb.a
 
-all: $(LIBRARY)
+all: $(LIBRARY) db-bench db-server
 
 clean:
 	-rm -f $(LIBRARY)  
@@ -44,6 +44,9 @@ db-bench: bench/nessdb-bench.o $(LIB_OBJS)
 
 db-server: server/nessdb-server.o $(SVR_OBJS) $(LIB_OBJS)
 	$(CC)  server/nessdb-server.o $(SVR_OBJS) $(LIB_OBJS) -o $@
+
+valgrind: clean all
+	valgrind --tool=memcheck --leak-check=full -v --track-origins=yes  --show-reachable=yes --track-fds=yes  ./db-bench add 
 
 #db-test: test/test_different_dirs.o $(SVR_OBJS)
 #	$(CC)  test/test_different_dirs.o $(SVR_OBJS)  -o $@
