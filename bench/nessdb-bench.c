@@ -126,6 +126,7 @@ void print_header()
 void print_environment()
 {
 	printf("nessDB:		version %s(Multiple && Distributable B+Tree with Level-LRU,Page-Cache)\n",V);
+	printf("Compiler:	%s\n", __VERSION__);
 	time_t now=time(NULL);
 	printf("Date:		%s",(char*)ctime(&now));
 	
@@ -174,11 +175,17 @@ void db_write_test(nessDB *db)
 	char val[VALSIZE];
 	start_timer();
 	for(i=0;i<NUM;i++){
-		memset(key,0,sizeof(key));
-		sprintf(key, "%u", i);
-		//fill_with_random(&key,KEYSIZE);
-		fill_with_random(&val,VALSIZE);
-		if(db_add(db, key, key)==1)
+		memset(key,'X',sizeof(key));
+		key[sizeof(key) - 1] = 0;
+		sprintf(key, "%08X", i);
+		key[8] = 'X';
+
+		memset(val,'X',sizeof(val));
+		val[sizeof(val) - 1] = 0;		
+		sprintf(val, "%08X", i);
+		val[8] = 'X';
+
+		if(db_add(db, key, val)==1)
 			count++;
 		if((i%5000)==0){
 			fprintf(stderr,"random write finished %ld ops%30s\r",i,"");
@@ -204,12 +211,14 @@ void db_read_random_test(nessDB *db)
 	char key[KEYSIZE]={0};
 	start_timer();
 	for(i=0;i<NUM;i++){
-		memset(key,0,sizeof(key));
-		sprintf(key, "%u", lfsr);
-		//fill_with_random(key,KEYSIZE);
+		memset(key,'X',sizeof(key)-1);
+		key[sizeof(key) - 1] = 0;
+		sprintf(key, "%08X", lfsr);
+		key[8] = 'X';
+		
 		void* data=db_get(db, key);
 		if(data){
-			count += (strcmp(data,key) == 0);
+			count += (strncmp(data,key,sizeof(key) - 1) == 0);
 			free(data);
 		}
 
@@ -238,12 +247,14 @@ void db_read_seq_test(nessDB *db)
 	double cost;
 	start_timer();
 	for(i=0; i < NUM; i++){
-		memset(key,0,sizeof(key));
-		sprintf(key, "%u", i);
-		//fill_with_random(key,KEYSIZE);
+		memset(key,'X',sizeof(key) - 1);
+		key[sizeof(key) - 1] = 0;
+		sprintf(key, "%08X", i);
+		key[8] = 'X';
+
 		void* data=db_get(db, key);
 		if(data){
-			count += (strcmp(key,data) == 0);
+			count += (strncmp(key,data,sizeof(key) - 1) == 0);
 			free(data);
 		}
 
@@ -274,8 +285,11 @@ void db_remove_test(nessDB *db)
 	char key[KEYSIZE]={0};
 	start_timer();
 	for(i=0;i<NUM;i++){
-		memset(key,0,sizeof(key));
-		sprintf(key,"%u", i);
+		memset(key,0,sizeof(key) - 1);
+		key[sizeof(key) - 1] = 0;
+		sprintf(key, "%08X", i);
+		key[8] = 'X';
+
 		db_remove(db, key);
 		count++;
 		if((count%100)==0){
@@ -310,7 +324,7 @@ int main(int argc,char** argv)
 	int show=1;
 	nessDB *db;
 	if(argc!=2){
-		fprintf(stderr,"Usage: nessdb_benchmark <op>\n");
+		fprintf(stderr,"Usage: db-benchmark <add|get|walk|remove>\n");
         	exit(1);
 	}
 
