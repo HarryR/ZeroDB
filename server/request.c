@@ -218,9 +218,9 @@ void request_dump(struct request *req)
 }
 
 void request_free(struct request *req)
-{
-	int i;
+{	
 	if(req){
+		int i;
 		for(i=0;i<req->argc;i++){
 			if(req->argv[i])
 				free(req->argv[i]);

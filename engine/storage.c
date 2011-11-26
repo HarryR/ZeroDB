@@ -220,7 +220,7 @@ static int btree_creat(struct btree *btree,const char *idx,const char *db)
 static int file_exists(const char *path)
 {
 	int fd=open(path, O_RDWR);
-	if(fd>-1){
+	if(fd != -1){
 		close(fd);
 		return 1;
 	}

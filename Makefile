@@ -46,7 +46,10 @@ db-server: server/nessdb-server.o $(SVR_OBJS) $(LIB_OBJS)
 	$(CC)  server/nessdb-server.o $(SVR_OBJS) $(LIB_OBJS) -o $@
 
 valgrind: clean all
-	valgrind --tool=memcheck --leak-check=full -v --track-origins=yes  --show-reachable=yes --track-fds=yes  ./db-bench add 
+	valgrind --tool=memcheck --leak-check=full -v --track-origins=yes  --show-reachable=yes --track-fds=yes  ./db-bench add
+	
+check:
+	cppcheck --quiet --enable=all ./
 
 #db-test: test/test_different_dirs.o $(SVR_OBJS)
 #	$(CC)  test/test_different_dirs.o $(SVR_OBJS)  -o $@

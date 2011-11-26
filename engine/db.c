@@ -118,11 +118,12 @@ int db_add(nessDB *db, const char *key,const char *value)
 void *db_get(nessDB *db, const char *key)
 {
 	void *v;
-	int k_l,v_l;
+	int v_l;
 	char *k_tmp,*v_tmp;
 
 	v=llru_get(key);
 	if(v==NULL){
+		int k_l;
 		unsigned int slot=djb_hash(key)%DB_SLOT;
 		v=btree_get(&db->_btrees[slot], key);
 		if(v==NULL)

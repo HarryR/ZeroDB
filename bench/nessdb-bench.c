@@ -130,12 +130,11 @@ void print_environment()
 	time_t now=time(NULL);
 	printf("Date:		%s",(char*)ctime(&now));
 	
-	int num_cpus=0;
-	char cpu_type[256]={0};
-	char cache_size[256]={0};
-
 	FILE* cpuinfo=fopen("/proc/cpuinfo","r");
 	if(cpuinfo){
+		int num_cpus=0;
+		char cpu_type[256]={0};
+		char cache_size[256]={0};
 		char line[1024]={0};
 		while(fgets(line,sizeof(line),cpuinfo)!=NULL){
 			const char* sep=strchr(line,':');
@@ -188,7 +187,7 @@ void db_write_test(nessDB *db)
 		if(db_add(db, key, val)==1)
 			count++;
 		if((i%5000)==0){
-			fprintf(stderr,"random write finished %ld ops%30s\r",i,"");
+			fprintf(stderr,"random write finished %u ops%30s\r",i,"");
 			fflush(stderr);
 		}
 	}
