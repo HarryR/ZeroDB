@@ -50,11 +50,11 @@
 
 #define KEYSIZE 	20
 #define VALSIZE 	100
-#define NUM 		0xFFFF
-#define R_NUM 		0xFFFF
-#define REMOVE_NUM	0xFFFF
+#define NUM 		2097152 //0xFFFF
+#define R_NUM 		2097152 //0xFFFF
+#define REMOVE_NUM	2097152 //0xFFFF
 #define BUFFERPOOL	(1024*1024*1024)
-#define V			"1.8"
+#define V			"1.8.1"
 #define LINE 		"+-----------------------+---------------------------+----------------------------------+---------------------+\n"
 #define LINE1		"--------------------------------------------------------------------------------------------------------------\n"
 
@@ -69,7 +69,20 @@ static uint16_t
 galois_lfsr16(uint16_t lfsr) {
 	return (lfsr >> 1) ^ (-(lfsr & 1u) & 0xB400u);
 }
-#define GLSFR16_INIT 0xACE1u
+#define GLFSR16_INIT 0xACE1u
+
+/* For additional info please see:
+ * http://lfsr-generator.sourceforge.net/
+ */
+static uint32_t
+galois_lfsr21(uint32_t lfsr) {
+	static const uint32_t feedback = (
+		(1 << (21 - 1)) ^
+		(1 << (19 - 1))
+	);
+	return (lfsr >> 1) ^ ((0 - (lfsr & 1)) & feedback);
+}
+#define GLFSR21_INIT 1
 
 static void start_timer(void)
 {
@@ -154,7 +167,7 @@ nessDB *db_init_test(int show)
 
 void db_write_test(nessDB *db)
 {
-	uint16_t i;
+	uint32_t i;
 	long count=0;
 	double cost;
 	char key[KEYSIZE];
@@ -162,10 +175,10 @@ void db_write_test(nessDB *db)
 	start_timer();
 	for(i=0;i<NUM;i++){
 		memset(key,0,sizeof(key));
-		sprintf(key, "%hu", i);
+		sprintf(key, "%u", i);
 		//fill_with_random(&key,KEYSIZE);
 		fill_with_random(&val,VALSIZE);
-		if(db_add(db, key, val)==1)
+		if(db_add(db, key, key)==1)
 			count++;
 		if((i%5000)==0){
 			fprintf(stderr,"random write finished %ld ops%30s\r",i,"");
@@ -184,21 +197,19 @@ void db_write_test(nessDB *db)
 
 void db_read_random_test(nessDB *db)
 {
-	uint16_t lfsr = GLSFR16_INIT;
+	uint32_t lfsr = GLFSR21_INIT;
 	long i,count=0;
-	long r_start=NUM/2;
-	long r_end=r_start+R_NUM;
 
 	double cost;
 	char key[KEYSIZE]={0};
 	start_timer();
-	for(i=r_start;i<r_end;i++){
+	for(i=0;i<NUM;i++){
 		memset(key,0,sizeof(key));
-		sprintf(key, "%hu", lfsr);
+		sprintf(key, "%u", lfsr);
 		//fill_with_random(key,KEYSIZE);
 		void* data=db_get(db, key);
 		if(data){
-			count++;
+			count += (strcmp(data,key) == 0);
 			free(data);
 		}
 
@@ -206,7 +217,7 @@ void db_read_random_test(nessDB *db)
 			fprintf(stderr,"random read finished %ld ops%30s\r",count,"");
 			fflush(stderr);
 		}
-		lfsr = galois_lfsr16(lfsr);
+		lfsr = galois_lfsr21(lfsr);
 	}
    	cost=get_timer();
 	printf(LINE);
@@ -220,21 +231,19 @@ void db_read_random_test(nessDB *db)
 
 void db_read_seq_test(nessDB *db)
 {
-	uint16_t i;
+	uint32_t i;
 	long count=0;
-	long r_start=NUM/3;
-	long r_end=r_start+R_NUM;
 
 	char key[KEYSIZE];
 	double cost;
 	start_timer();
-	for(i=0; i < 0xFFFF; i++){
+	for(i=0; i < NUM; i++){
 		memset(key,0,sizeof(key));
-		sprintf(key, "%hu", i);
+		sprintf(key, "%u", i);
 		//fill_with_random(key,KEYSIZE);
 		void* data=db_get(db, key);
 		if(data){
-			count++;
+			count += (strcmp(key,data) == 0);
 			free(data);
 		}
 
@@ -258,17 +267,15 @@ void db_read_seq_test(nessDB *db)
 
 void db_remove_test(nessDB *db)
 {
-		
-	long i,count=0;
-	long r_start=NUM/6;
-	long r_end=r_start+REMOVE_NUM;
+	uint32_t i;
+	long count=0;
 
 	double cost;
 	char key[KEYSIZE]={0};
 	start_timer();
-	for(i=r_start;i<r_end;i++){
+	for(i=0;i<NUM;i++){
 		memset(key,0,sizeof(key));
-		sprintf(key,"%dkey",rand()%NUM);
+		sprintf(key,"%u", i);
 		db_remove(db, key);
 		count++;
 		if((count%100)==0){
