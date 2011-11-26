@@ -164,4 +164,6 @@ void llru_info(struct llru_info *llru_info)
 void llru_free()
 {
 	ht_free(&_ht);
+	free(_level_old);
+	free(_level_new);
 }

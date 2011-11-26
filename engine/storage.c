@@ -265,6 +265,7 @@ void btree_close(struct btree *btree)
 			free(btree->cache[i]->table);
 		free(btree->cache[i]);
 	}
+	free(btree->cache);
 }
 
 

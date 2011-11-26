@@ -73,9 +73,10 @@ static size_t djb_hash(const char* key)
         return 0;
     }
     unsigned int hash = 5381;
-    unsigned int c;
-    while ((c = *key++))
-	hash = ((hash << 5) + hash) + (unsigned int)c;  /* hash * 33 + c */
+    unsigned int c = 0;
+    while( (c = *key++) != 0 ) {
+		hash = ((hash << 5) + hash) + (unsigned int)c;  /* hash * 33 + c */
+	}
 
    return (size_t) hash;
 }
@@ -84,7 +85,11 @@ nessDB *db_init(int bufferpool_size, const char *basedir)
 {
 	int i;
 	int pagepool_size=bufferpool_size*(1-RATIO)/DB_SLOT;
-	_ensure_dir_exists(concat_paths(basedir, DB_DIR));
+
+	char dbdir[256];
+	snprintf(dbdir, 256, "%s/%s", basedir, DB_DIR);
+	_ensure_dir_exists(dbdir);
+
  	nessDB *db = malloc(sizeof(nessDB));
 	llru_init(bufferpool_size*RATIO);
 	for(i=0;i<DB_SLOT;i++){
