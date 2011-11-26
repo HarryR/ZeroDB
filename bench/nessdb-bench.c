@@ -38,6 +38,7 @@
 #include <stdint.h>
 #include <time.h>
 #include <string.h>
+#include <assert.h>
 #include "../engine/db.h"
 #include "../engine/platform.h"
 
@@ -47,19 +48,28 @@
 #define OP_REMOVE 4
 
 
-#define KEYSIZE 	16
-#define VALSIZE 	80
-#define NUM 		2000000
-#define R_NUM 		20000
-#define REMOVE_NUM	20000
+#define KEYSIZE 	20
+#define VALSIZE 	100
+#define NUM 		0xFFFF
+#define R_NUM 		0xFFFF
+#define REMOVE_NUM	0xFFFF
 #define BUFFERPOOL	(1024*1024*1024)
 #define V			"1.8"
 #define LINE 		"+-----------------------+---------------------------+----------------------------------+---------------------+\n"
 #define LINE1		"--------------------------------------------------------------------------------------------------------------\n"
 
-
 #include <sys/time.h>
 static struct timeval  start;
+
+/* Produces a sequences of non-repeating numbers with a long period.
+ * Used for the random-read tests.
+ * http://en.wikipedia.org/wiki/Linear_feedback_shift_register
+ */
+static uint16_t
+galois_lfsr16(uint16_t lfsr) {
+	return (lfsr >> 1) ^ (-(lfsr & 1u) & 0xB400u);
+}
+#define GLSFR16_INIT 0xACE1u
 
 static void start_timer(void)
 {
@@ -75,21 +85,15 @@ static double get_timer(void)
         return seconds + (double) nseconds / 1.0e9;
 }
 
-
-static char value[VALSIZE+1]={0};
-void random_value()
-{
-	char salt[10]={'1','2','3','4','5','6','7','8','a','b'};
-	int i;
-	for(i=0;i<VALSIZE;i++)
-		value[i]=salt[rand()%10];
-}
-
-void random_key(char *key,int length) {
-    	char salt[36]= "abcdefghijklmnopqrstuvwxyz0123456789";
-	memset(key,0,length);
-	for (int i = 0; i < length; i++)
-		key[i] = salt[rand() % length];
+/**
+ * Fill `key` with `n` - 1 ascii printable letters
+ */
+void
+fill_with_random(char *key,size_t n) {
+	memset(key,0,n);
+	for (int i = 0; i < (n - 1); i++) {
+		key[i] = '0' + (rand() % 50);
+	}
 }
 
 double _index_size=(double)((double)(KEYSIZE+8)*NUM)/1048576.0;
@@ -144,19 +148,24 @@ void print_environment()
 
 nessDB *db_init_test(int show)
 {
-	random_value();
-	return db_init(BUFFERPOOL, getcwd(NULL,0));
+	char dirbuf[256];
+	return db_init(BUFFERPOOL, getcwd(dirbuf,sizeof(dirbuf)));
 }
 
 void db_write_test(nessDB *db)
 {
-	long i,count=0;
+	uint16_t i;
+	long count=0;
 	double cost;
 	char key[KEYSIZE];
+	char val[VALSIZE];
 	start_timer();
-	for(i=1;i<NUM;i++){
-		random_key(key,KEYSIZE);
-		if(db_add(db, key, value)==1)
+	for(i=0;i<NUM;i++){
+		memset(key,0,sizeof(key));
+		sprintf(key, "%hu", i);
+		//fill_with_random(&key,KEYSIZE);
+		fill_with_random(&val,VALSIZE);
+		if(db_add(db, key, val)==1)
 			count++;
 		if((i%5000)==0){
 			fprintf(stderr,"random write finished %ld ops%30s\r",i,"");
@@ -175,6 +184,7 @@ void db_write_test(nessDB *db)
 
 void db_read_random_test(nessDB *db)
 {
+	uint16_t lfsr = GLSFR16_INIT;
 	long i,count=0;
 	long r_start=NUM/2;
 	long r_end=r_start+R_NUM;
@@ -183,7 +193,9 @@ void db_read_random_test(nessDB *db)
 	char key[KEYSIZE]={0};
 	start_timer();
 	for(i=r_start;i<r_end;i++){
-		random_key(key,KEYSIZE);
+		memset(key,0,sizeof(key));
+		sprintf(key, "%hu", lfsr);
+		//fill_with_random(key,KEYSIZE);
 		void* data=db_get(db, key);
 		if(data){
 			count++;
@@ -194,7 +206,7 @@ void db_read_random_test(nessDB *db)
 			fprintf(stderr,"random read finished %ld ops%30s\r",count,"");
 			fflush(stderr);
 		}
-
+		lfsr = galois_lfsr16(lfsr);
 	}
    	cost=get_timer();
 	printf(LINE);
@@ -208,15 +220,18 @@ void db_read_random_test(nessDB *db)
 
 void db_read_seq_test(nessDB *db)
 {
-	long i, count=0;
+	uint16_t i;
+	long count=0;
 	long r_start=NUM/3;
 	long r_end=r_start+R_NUM;
 
+	char key[KEYSIZE];
 	double cost;
-	char key[KEYSIZE]={0};
 	start_timer();
-	for(i=r_start;i<r_end;i++){
-		random_key(key,KEYSIZE);
+	for(i=0; i < 0xFFFF; i++){
+		memset(key,0,sizeof(key));
+		sprintf(key, "%hu", i);
+		//fill_with_random(key,KEYSIZE);
 		void* data=db_get(db, key);
 		if(data){
 			count++;
