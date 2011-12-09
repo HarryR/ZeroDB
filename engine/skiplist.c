@@ -31,12 +31,13 @@
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <assert.h>
 
 #include "skiplist.h"
 #include "debug.h"
 
-#define cmp_lt(a, b) (strcmp(a, b) < 0)
-#define cmp_eq(a, b) (strcmp(a, b) == 0)
+#define min(a,b) (a<b?a:b)
+#define cmp(a, b) (strncmp(a, b->data, min(b->len,SKIP_KSIZE)))
 
 #define NIL list->hdr
 
@@ -48,14 +49,12 @@ struct pool {
 
 struct pool *_pool_new()
 {
-	unsigned int p_size = 1024*512 - sizeof(struct pool);
-	struct pool *pool = malloc(sizeof(struct pool) + p_size);
-
+	unsigned int p_size = 1024*512 + sizeof(struct pool);
+	struct pool *pool = malloc(p_size);
 	memset(pool, 0, p_size);
 	pool->next = NULL;
 	pool->ptr = (char*)(pool + 1);
-	pool->rem = p_size;
-	
+	pool->rem = (p_size - sizeof(struct pool));
 	return pool;
 }
 
@@ -113,11 +112,9 @@ void skiplist_free(struct skiplist *list)
 	free(list);
 }
 
-int skiplist_notfull(struct skiplist *list)
+int skiplist_full(struct skiplist *list)
 {
-	if (list->count < list->size)
-		return 1;
-
+	//return (list->count >= list->size);
 	return 0;
 }
 
@@ -127,21 +124,20 @@ int skiplist_insert(struct skiplist *list, struct slice *sk, uint64_t val, OPT o
 	struct skipnode *update[MAXLEVEL+1];
 	struct skipnode *x;
 
-	char *key = sk->data;
-
-	if (!skiplist_notfull(list))
+	if (skiplist_full(list)) {
 		return 0;
+	}
 
 	x = list->hdr;
 	for (i = list->level; i >= 0; i--) {
 		while (x->forward[i] != NIL 
-				&& cmp_lt(x->forward[i]->key, key))
+				&& cmp(x->forward[i]->key, sk) < 0)
 			x = x->forward[i];
 		update[i] = x;
 	}
 
 	x = x->forward[0];
-	if (x != NIL && cmp_eq(x->key, key)) {
+	if (x != NIL && cmp(x->key, sk) == 0) {
 		x->val = val;
 		x->opt = opt;
 		return(1);
@@ -159,7 +155,7 @@ int skiplist_insert(struct skiplist *list, struct slice *sk, uint64_t val, OPT o
 	if ((x =_pool_alloc(list,sizeof(struct skipnode) + new_level*sizeof(struct skipnode *))) == 0)
 		__DEBUG("%s", "ERROR: Alloc Memory *ERROR*");
 
-	memcpy(x->key, key, sk->len);
+	memcpy(x->key, sk->data, sk->len<SKIP_KSIZE?sk->len:SKIP_KSIZE);
 	x->val = val;
 	x->opt = opt;
 
@@ -172,7 +168,7 @@ int skiplist_insert(struct skiplist *list, struct slice *sk, uint64_t val, OPT o
 	return(1);
 }
 
-void skiplist_delete(struct skiplist *list, char* data) 
+void skiplist_delete(struct skiplist *list, struct slice* sk) 
 {
 	int i;
 	struct skipnode *update[MAXLEVEL+1], *x;
@@ -180,12 +176,12 @@ void skiplist_delete(struct skiplist *list, char* data)
 	x = list->hdr;
 	for (i = list->level; i >= 0; i--) {
 		while (x->forward[i] != NIL 
-				&& cmp_lt(x->forward[i]->key, data))
+				&& cmp(x->forward[i]->key, sk) < 0)
 			x = x->forward[i];
 		update[i] = x;
 	}
 	x = x->forward[0];
-	if (x == NIL || !cmp_eq(x->key, data))
+	if (x == NIL || cmp(x->key, sk) != 0)
 		return;
 
 	for (i = 0; i <= list->level; i++) {
@@ -203,33 +199,54 @@ void skiplist_delete(struct skiplist *list, char* data)
 struct skipnode *skiplist_lookup(struct skiplist *list, struct slice *sk) 
 {
 	int i;
-	char *data = sk->data;
 	struct skipnode *x = list->hdr;
 	for (i = list->level; i >= 0; i--) {
-		while (x->forward[i] != NIL 
-				&& cmp_lt(x->forward[i]->key, data))
+		while ( x->forward[i] != NIL 
+			 && x->forward[i] != NULL
+			 && cmp(x->forward[i]->key, sk) < 0)
+		{			
 			x = x->forward[i];
+		}			
 	}
 	x = x->forward[0];
-	if (x != NIL && cmp_eq(x->key, data)) 
+	if( x != NIL && cmp(x->key, sk) == 0 ) {
 		return (x);
+	}
 
 	return NULL;
 }
 
+struct skipnode *skiplist_next(struct skiplist *list, struct slice *sk) 
+{
+	assert(sk->data != NULL);
+	assert(list->hdr != NULL);
+
+	int i = list->level;
+	struct skipnode *x = list->hdr;
+	do {
+		while( (x = x->forward[i]) != NULL
+		  	&& x->forward[i] != NIL
+		  	&& cmp(x->forward[i]->key, sk) <= 0) {
+		  x = x->forward[i];
+		}
+	} while( i-- >= 0 );
+	return x->forward[0];
+}
 
 void skiplist_dump(struct skiplist *list)
 {
-	int i;
+	size_t i;
 	struct skipnode *x = list->hdr->forward[0];
-
-	printf("--skiplist dump:level<%d>,size:<%d>,count:<%d>\n",
+	printf("{");
+	printf("{meta:{val_size:%zu,",sizeof(uint64_t));
+	printf("level:%d,size:%d,count:%d}},{data:[\n",
 			list->level,
 			(int)list->size,
 			(int)list->count);
 
 	for (i=0; i<list->count; i++) {
-		printf("	[%d]key:<%s>;val<%" PRIu64 ">;opt<%s>\n", i, x->key, x->val, x->opt == ADD?"ADD":"DEL");
+		printf("{key:'%.64s',val:%" PRIu64 ">,opt='%s'},\n", x->key, x->val, x->opt == ADD?"ADD":"DEL");
 		x = x->forward[0];
 	}
+	printf("]}}\n");
 }

@@ -18,8 +18,8 @@ struct skipnode{
 
 struct skiplist{
 	struct  skipnode *hdr;                 
-	int count;
-	int size;
+	size_t count;
+	size_t size;
 	int level; 
 	char pool_embedded[1024];
 	struct pool *pool;
@@ -29,7 +29,8 @@ struct skiplist *skiplist_new(size_t size);
 void skiplist_init(struct skiplist *list);
 int skiplist_insert(struct skiplist *list, struct slice *sk, uint64_t val, OPT opt);
 struct skipnode *skiplist_lookup(struct skiplist *list, struct slice *sk);
-int skiplist_notfull(struct skiplist *list);
+struct skipnode *skiplist_next(struct skiplist *list, struct slice *sk);
+int skiplist_full(struct skiplist *list);
 void skiplist_dump(struct skiplist *list);
 void skiplist_free(struct skiplist *list);
 
