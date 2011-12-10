@@ -1,12 +1,8 @@
 UNAME := $(shell uname)
-ifeq ($(UNAME), Linux)
-	DEBUG = -g -ggdb -DDEBUG -fPIC
-else
-	DEBUG =	-g -ggdb -DDEBUG
-endif
+DEBUG =	-g -ggdb -DDEBUG
 
-CC = clang
-CFLAGS = -std=c99 -O3 -Wall -Wextra $(DEBUG)	
+CC = @gcc
+CFLAGS = -std=c99 -O3 -Wall -Wextra -fPIC $(DEBUG)	
 
 LIB_OBJS = \
 	./engine/ht.o		\
@@ -30,7 +26,10 @@ BENCH_OBJS = ./bench/db-bench.c
 
 LIBRARY = libnessdb.a
 
-ALL = $(LIBRARY) db-bench db-server db-zmq mod-nessdb.so mod-skiplist.so mod-ht.so mod-null.so
+MODS = mod-nessdb.so mod-skiplist.so mod-ht.so mod-null.so mod-tcbdb.so
+MAINS = db-bench db-server db-zmq
+
+ALL = $(LIBRARY) $(MAINS) $(MODS)
 
 all: $(ALL)
 
@@ -39,12 +38,12 @@ clean:
 	-rm -f bench/*.o server/*.o engine/*.o
 
 cleandb:
-	-rm -rf ndbs
+	-rm -rf ndbs database.tcbdb.dat
 
 $(LIBRARY): $(LIB_OBJS)
-	rm -f $@
-	$(AR) -rs $@ $(LIB_OBJS)
-	rm -f $(LIB_OBJS)
+	@rm -f $@
+	@$(AR) -rs $@ $(LIB_OBJS)
+	@rm -f $(LIB_OBJS)
 
 .PHONY: BENCHMARK
 BENCHMARK: db-bench
@@ -70,3 +69,6 @@ mod-ht.so: ./engine/ht.c server/mod-ht.c
 
 mod-null.so: server/mod-null.c
 	$(CC) $(CFLAGS) -shared -o $@ $+
+
+mod-tcbdb.so: server/mod-tcbdb.c
+	$(CC) $(CFLAGS) -shared -o $@ $+ -ltokyocabinet
