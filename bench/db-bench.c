@@ -39,6 +39,8 @@
  * TODO: output CSV of results
  */
 
+#define _POSIX_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -53,37 +55,20 @@
 
 #include "../server/db-zmq.h"
 
-// Hand crafted so the output looks nice
-#define LINE 		"+----------------------+-----------+-----------------+--------------------+---------------+--------------------+\n"
-#define LINE1		"+--------------------------------------------------------------------------------------------------------------+\n"
+#define HEADER	"| Status               | OK Rate   | Response Tm | Throughput         | Bandwidth     | Time               |\n"
+#define LINE1	"+----------------------+-----------+-------------+--------------------+---------------+--------------------+\n"
+#define LINE	"+--------------------------------------------------------------------------------------------------------------+\n"
 
-static void
-start_timer(struct timeval *start)
-{
-    gettimeofday(start, NULL);
-}
-
-static double
-get_timer(struct timeval *start)
-{
-    struct timeval end;
-    gettimeofday(&end, NULL);
-	return (double)(end.tv_sec - start->tv_sec) + (double)(end.tv_usec - start->tv_usec) / 1000000.0;
-}
-
-static void
-fill_random( char* x, size_t len ) {
-	size_t i;
-	for( i = 0; i < len; i++ ) {
-		x[i] = rand() % 0xFF;
-	}
-}
+#define cycle32(i) (((i) >> 1) ^ (-((i) & 1u) & 0xD0000001u))
 
 struct benchmark {
 	char *name;
 	size_t entries;
+	char* key;
 	size_t key_len;
+	char* val;
 	size_t val_len;
+	size_t read_pct;
 
 	uint32_t count;
 	uint32_t ok_count;
@@ -92,13 +77,11 @@ struct benchmark {
 
 	struct timeval start;
 
-	struct dbz_op* put_op;
-	struct dbz_op* get_op;
-	struct dbz_op* del_op;
-
 	dbzop_t put;
 	dbzop_t get;
 	dbzop_t del;
+	dbzop_t walk;
+	dbzop_t flush;
 
 	void (*controller)( struct benchmark* );
 };
@@ -114,10 +97,47 @@ struct benchmark_controller {
  */
 typedef size_t (*benchmark_op_t)(struct benchmark *b);
 
-#define cycle32(i) ((i >> 1) ^ (-(i & 1u) & 0xD0000001u))
+
+static void
+start_timer(struct timeval *start)
+{
+    gettimeofday(start, NULL);
+}
+
+static double
+get_timer(struct timeval *start)
+{
+    struct timeval end;
+    assert(start != NULL);
+    gettimeofday(&end, NULL);
+	return (double)(end.tv_sec - start->tv_sec) + (double)(end.tv_usec - start->tv_usec) / 1000000.0;
+}
+
+static void
+fill_random( char* x, size_t len ) {
+	size_t i;
+	assert(x != NULL);
+	for( i = 0; i < len; i++ ) {
+		x[i] = '0' + (rand() % 40);
+	}
+}
+
+static void
+fill_pseudorandom( char* x, size_t len, benchmark_t *b ) {
+	unsigned int i, rstate;
+	assert(x != NULL);
+	assert(b != NULL);
+	rstate = (int)(b->count % (b->entries/4));
+	for( i = 0; i < len; i++ ) {
+		x[i] = (rstate + i % 0xFF);
+		rstate = (rstate >> 1) ^ (-(rstate & 1u) & 0xD0000001u);
+	}
+}
+
 
 static void
 benchmark_reset( benchmark_t *self ) {
+	assert(self != NULL);
 	self->count = 0;
 	self->ok_count = 0;
 	self->io_bytes = 0;
@@ -126,17 +146,8 @@ benchmark_reset( benchmark_t *self ) {
 
 static size_t
 benchmark_bps(benchmark_t *self) {
+	assert(self != NULL);
 	return (self->io_bytes / (get_timer(&self->start) + 1));
-}
-
-DB_OP(validate_value){
-	(void)cb;
-	benchmark_t* b = (benchmark_t*)token;
-	if( in_sz != b->val_len ) return 0;
-	char val[b->val_len];
-	memset(val, 'X', b->val_len);
-	if( memcmp(val, in_data, in_sz) != 0 ) return 0;
-	return in_sz;
 }
 
 DB_OP(count_value){
@@ -160,7 +171,7 @@ benchmark_op(benchmark_t *self, uint32_t count, benchmark_op_t op, char *progres
 	for (i = 0; i < count; i++) {
 		size_t io_bytes = op(self);
 		self->count++;
-		self->ok_count += (io_bytes ? 1 : 0);
+		self->ok_count += (io_bytes>0 ? 1 : 0);
 		self->io_bytes += io_bytes;
 		if( progress && (i % (prog_stop + 1)) == 0) {
 			fprintf(stderr, "%3zu%% @ %5.1fmb/s -- %-50s\r", self->count / (self->entries / 100), benchmark_bps(self) / 1024.0 / 1024.0, progress);
@@ -172,25 +183,27 @@ benchmark_op(benchmark_t *self, uint32_t count, benchmark_op_t op, char *progres
 
 
 static void
-benchmark_report(benchmark_t *self) {
-	printf("| %-20s | %4.1f%% OK | %8.6f sec/op | %10.2f ops/sec | %5.1f MiB/sec | %.2f sec runtime |\n"
-		,self->name
+benchmark_report(benchmark_t *self, const char* name) {
+	assert(self != NULL);
+	printf("| %-20s | %8.1f%% | %8.6f ms | %10.2f ops/sec | %5.1f MiB/sec | start + %6.1f sec |\n"
+		,name
 		,(double)(self->ok_count / (self->count / 100.0))
-		,(double)(self->cost / self->count)
+		,(double)(self->cost / self->count) * 1000
 		,self->count / self->cost
 		,benchmark_bps(self) / 1024.0 / 1024.0
 		,self->cost);
-	printf(LINE);
 }
 
 
 static void
 benchmark_run(benchmark_t *self) {
+	assert(self != NULL);
 	srand(time(NULL));
-	printf(LINE);
+	printf(LINE1);
+	printf(HEADER);
 	start_timer(&self->start);
 	self->controller(self);
-	benchmark_report(self);
+	printf(LINE1);
 }
 
 static size_t
@@ -199,160 +212,176 @@ bop_null(benchmark_t* b) {
 }
 
 static size_t
-bop_read_thrash(benchmark_t* b) {
-	char key[b->key_len];
-	fill_random(key, b->key_len);
-	return b->get(key, b->key_len, count_value, NULL);
-}
-
-static size_t
-bop_write_thrash(benchmark_t* b) {
-	char val[b->val_len];
-	fill_random(val, b->val_len);
-	return b->put(val, b->val_len, NULL, NULL);
+bop_read_random(benchmark_t* b) {
+	assert(b != NULL);
+	fill_random(b->key, b->key_len);
+	return b->get(b->key, b->key_len, count_value, NULL);
 }
 
 static size_t
 bop_write_random(benchmark_t* b) {
-	char val[b->val_len];
-	int i = cycle32((uint32_t)(rand() % b->entries));
-	snprintf(val, b->val_len, "V%XA%XL%XU%XE%X", i,  i, i, i, i);
-	return b->put(val, b->val_len, NULL, NULL);
+	assert(b != NULL);
+	size_t pairsz = b->val_len+b->key_len;
+	char* pair = malloc(pairsz);
+	fill_random(pair, pairsz);
+	size_t ret = b->put(pair, pairsz, NULL, NULL);
+	free(pair);
+	return ret;
 }
 
 static size_t
-bop_read_random(benchmark_t* b) {
-	char key[b->key_len];
-	memset(key, 'X', b->key_len);
+bop_write_pseudorand(benchmark_t* b) {
+	assert(b != NULL);
+	size_t pairsz = b->key_len + b->val_len;
+	char* pair = malloc(pairsz);
+	fill_pseudorandom(pair, pairsz, b);
+	size_t retsz = b->put(pair, pairsz, NULL, NULL);
+	free(pair);
+	return retsz;
+}
 
-	int i = cycle32(b->entries);
-	i = snprintf(key, b->key_len, "%X", i);
-	key[i] = 'X';
-
-	return b->get(key, b->key_len, validate_value, b);
+static size_t
+bop_read_pseudorand(benchmark_t* b) {
+	assert(b != NULL);
+	fill_pseudorandom(b->key, b->key_len, b);
+	return b->get(b->key, b->key_len, NULL, NULL);
 }
 
 static size_t
 bop_write_sequence(benchmark_t* b) {
-	char val[b->val_len];
-	memset(val, 'X', b->val_len);
-	int i = 
-	snprintf(val, b->val_len, "V%XA%XL%XU%XE%X", i,  i, i, i, i);
-	return b->put(val, b->val_len, NULL, NULL);
+	assert(b != NULL);
+	size_t pair_sz = b->key_len+b->val_len;
+	char* pair = malloc(pair_sz);
+	int i = b->count % (b->entries/100);
+	memset(pair, 'X', pair_sz);
+	snprintf(pair, b->key_len, "%X", i);
+	snprintf(pair+b->key_len, b->val_len, "V%XA%XL%XU%XE%X", i, i, i, i, i);
+	return b->put(pair, pair_sz, NULL, NULL);
 }
 
 static size_t
 bop_read_sequence(benchmark_t* b) {
-	char key[b->key_len];
-	char val[b->val_len];
-	memset(key, 'X', b->key_len);
-	memset(val, 'X', b->val_len);
-	snprintf(key, b->key_len, "%X", b->count);
-	snprintf(val, b->val_len, "V%XA%XL%XU%XE%X", b->count, b->count, b->count, b->count, b->count);
+	assert(b != NULL);
+	int i = b->count % (b->entries/100);
+	snprintf(b->key, b->key_len, "%X", i);
+	fill_pseudorandom(b->val, b->val_len, b);
 
-	return b->get(key, b->key_len, validate_value, b);
+	return b->get(b->key, b->key_len, NULL, NULL);
 }
 
 static size_t
 bop_remove_sequence(benchmark_t* b) {
-	char key[b->key_len];
-	memset(key, 'X', b->key_len);
-	if( b->count ) b->count--;
-	return b->del(key, b->key_len, NULL, NULL);
+	assert(b != NULL);
+	int i = b->count % (b->entries/100);
+	memset(b->key, 'X', b->key_len);
+	snprintf(b->key, b->key_len, "%X", i);
+	return b->del(b->key, b->key_len, NULL, NULL);
 }
 
 static void
 db_test_null( benchmark_t* b ) {
+	assert(b != NULL);
 	benchmark_op(b, b->entries, bop_null, "Doing nothing");
 }
 
 static void
-db_test_writerand( benchmark_t *b ) {
-	char desc[400];
-	snprintf(desc, sizeof(desc), "writing random %zub keys and %zub values", b->key_len, b->val_len);
-	benchmark_op(b, b->entries, bop_write_random, desc);
-}
+run_test_rwmix( benchmark_t *b, size_t entries, benchmark_op_t readop_cb, benchmark_op_t writeop_cb ) {
+	size_t i;
+	size_t runs = 1000;
+	size_t read_cnt = 0, write_cnt = 0;
+	size_t entries_per_run = (entries/runs);
+	assert(b != NULL);
+	assert(readop_cb != NULL);
+	b->key = malloc(b->key_len);
+	memset(b->key, 'X', b->key_len);
+	b->val = malloc(b->val_len);
+	memset(b->val, 'X', b->val_len);
+	for( i = 0; i < runs; i++ ) {
+		if( b->read_pct >= (size_t)(rand() % 100) ) {			
+			benchmark_op(b, entries_per_run, readop_cb, NULL);			
+			read_cnt++;
+		}
+		else {
+			benchmark_op(b, entries_per_run, writeop_cb, NULL);
+			write_cnt++;
+		}
 
-static void
-db_test_readrand( benchmark_t* b ) {
-	benchmark_op(b, b->entries / 2, bop_read_random, "reading random keys in 32bit space");
-	benchmark_op(b, b->entries / 2, bop_write_random, "writing random keys in 32bit space");
-	benchmark_op(b, b->entries / 2, bop_read_random, "reading random keys in 32bit space");
-}
+		if( i != 0 && ((i % (runs/10) == 0) || i == runs) ) {			
+			char buf[200];
+			sprintf(buf, "R:%.1f%% / W:%.1f%%", read_cnt/(i/100.0), write_cnt/(i/100.0));
 
-static void
-db_test_writeseq( benchmark_t *b ) {
-	benchmark_op(b,  b->entries, bop_write_sequence, "writing keys sequentially");
-}
+			if( b->flush ) {
+				b->flush("Hello",4,NULL,NULL);
+			}
 
-
-static void
-db_test_readseq( benchmark_t* b ) {
-	benchmark_op(b, b->entries / 2, bop_write_sequence, "filling test data");
-	benchmark_op(b, b->entries / 2, bop_read_sequence, "reading keys sequentially");
-}
-
-static void
-db_test_removeseq( benchmark_t *b ) {
-	benchmark_op(b, 100000, bop_remove_sequence, "removing non-existant keys sequentially");
-}
-
-static void
-run_test_rwmix( benchmark_t *b, size_t entries ) {
-	size_t run_count, i, op;
-
-	run_count = entries / 100;
-	for( i = 0; i < 100; i++ ) {
-		op = cycle32(i) % 7;
-		if( ! op-- ) benchmark_op(b, run_count, bop_remove_sequence, "Remove sequential");
-		if( ! op-- ) benchmark_op(b, run_count, bop_write_random, "Write random");
-		if( ! op-- ) benchmark_op(b, run_count, bop_write_sequence, "Write Sequence");
-		if( ! op-- ) benchmark_op(b, run_count, bop_write_thrash, "Write Thrash");
-		if( ! op-- ) benchmark_op(b, run_count, bop_read_sequence, "Read Sequence");
-		if( ! op-- ) benchmark_op(b, run_count, bop_read_thrash, "Read Thrash");
-		else benchmark_op(b, run_count, bop_read_random, "Read Random");
-
-		if( (i % 5) == 0 ) {
-			benchmark_report(b);
+			benchmark_report(b, buf);
 		}
 	}
+	free(b->key);
+	free(b->val);
+	b->key = NULL;
+	b->val = NULL;
 }
 
 static void
-db_test_rwmix( benchmark_t *b ) {
-	run_test_rwmix(b, b->entries);
+db_test_pseudorandom( benchmark_t* b ) {
+	assert(b != NULL);
+	run_test_rwmix(b, b->entries, bop_read_pseudorand, bop_write_pseudorand);
+}
+
+static void
+db_test_removewrite( benchmark_t* b ) {
+	assert(b != NULL);
+	run_test_rwmix(b, b->entries, bop_remove_sequence, bop_write_sequence);
+}
+
+static void
+db_test_sequence( benchmark_t* b ) {
+	assert(b != NULL);
+	run_test_rwmix(b, b->entries, bop_read_sequence, bop_write_sequence);
+}
+
+static void
+db_test_random( benchmark_t *b ) {
+	assert(b != NULL);
+	run_test_rwmix(b, b->entries, bop_read_random, bop_write_random);
 }
 
 static struct benchmark_controller
 available_benchmarks[] = {
 	{"null", db_test_null},
-	{"readrandom", db_test_readrand},
-	{"readseq", db_test_readseq},
-	{"writerand", db_test_writerand},
-	{"writeseq", db_test_writeseq},
-	{"removeseq", db_test_removeseq},
-	{"rwmix", db_test_rwmix},
+	{"readwrite-pseudorandom", db_test_pseudorandom},
+	{"removewrite-sequence", db_test_removewrite},
+	{"readwrite-sequence", db_test_sequence},
+	{"readwrite-random", db_test_random},
 	{NULL, NULL}	
 };
 
 static bool
 benchmark_validate( benchmark_t *b ) {
+	static char* all = "all";
+	assert(b != NULL);
 	struct benchmark_controller* r = &available_benchmarks[0];
 	if( b->name == NULL ) {
-		warnx("No benchmark name specified");
-		return false;
+		warnx("No benchmark name specified, performing all");
+		b->name = all;
 	}
-	while( r->name ) {
-		if( ! strcmp(b->name, r->name) ) {
-			b->controller = r->runner;
-			break;
+	else {
+		while( r->name ) {
+			if( ! strcmp(b->name, r->name) ) {
+				b->controller = r->runner;
+				break;
+			}
+			r++;
 		}
-		r++;
 	}
-	if( r->name == NULL ) {
+
+	if( r->name == NULL && strcmp("all",b->name) != 0 ) {
 		warnx("Unknown benchmark name '%s'", b->name);
 		return false;
 	}
+
+	if( b->read_pct > 100 ) b->read_pct = 100;
 
 	if( ! b->get || ! b->put || ! b->del ) {
 		warnx("Database does not support all basic operations needed");
@@ -369,8 +398,6 @@ static void
 print_environment(void)
 {
 	time_t now = time(NULL);
-	
-	//printf("  nessDB:	version %s (%s)\n", NESSDB_VERSION, NESSDB_FEATURES);
 	printf("  Compiler:	%s\n", __VERSION__);
 	printf("  Date:		%s", (char*)ctime(&now));
 	
@@ -408,6 +435,7 @@ static void
 print_usage( char *prog ) {
 	fprintf(stderr,
 		"Usage: %s [options] <module.so> <benchmark-name>\n"
+		"\t-r <pct> Workload read percentage %%\n"
 		"\t-e <num> Number of DB entries (default: 500000)\n"
 		"\t-k <num> Key size in bytes (default: 20)\n"
 		"\t-v <num> Value size in bytes (default: 100)\n"
@@ -429,6 +457,7 @@ main(int argc, char** argv)
 	int c;
 	benchmark_t bench = {
 		.name = NULL,
+		.read_pct = 50,
 		.entries = 500000,
 		.key_len = 20,
 		.val_len = 100,
@@ -438,8 +467,12 @@ main(int argc, char** argv)
 	};
 	benchmark_reset(&bench);
 
-	while( (c = getopt(argc, argv, "d:e:k:v:c:")) != -1 ) {
+	while( (c = getopt(argc, argv, "d:e:k:v:c:r:")) != -1 ) {
 		switch( c ) {
+		case 'r':
+			bench.read_pct = atoi(optarg);
+			break;
+
 		case 'e':
 			bench.entries = atoi(optarg);
 			break;
@@ -470,13 +503,17 @@ main(int argc, char** argv)
 		if( ! dbz ) {
 			return EXIT_FAILURE;
 		}
-		bench.put_op = dbz_op(dbz, "put");
-		bench.get_op = dbz_op(dbz, "get");
-		bench.del_op = dbz_op(dbz, "del");
+		struct dbz_op *put_op = dbz_op(dbz, "put"),
+					*get_op = dbz_op(dbz, "get"),
+					*del_op = dbz_op(dbz, "del"),
+					*walk_op = dbz_op(dbz, "walk"),
+					*flush_op = dbz_op(dbz, "flush");
 
-		if( bench.put_op ) bench.put = bench.put_op->cb;
-		if( bench.get_op ) bench.get = bench.get_op->cb;
-		if( bench.del_op ) bench.del = bench.del_op->cb;
+		if( put_op ) bench.put = put_op->cb;
+		if( get_op ) bench.get = get_op->cb;
+		if( del_op ) bench.del = del_op->cb;
+		if( walk_op ) bench.walk = walk_op->cb;
+		if( flush_op ) bench.flush = flush_op->cb;
 	}
 	
 	if( ! benchmark_validate(&bench) ) {
@@ -484,22 +521,18 @@ main(int argc, char** argv)
 		return EXIT_FAILURE;
 	}
 
-	printf(LINE1);
 	print_environment();
-	printf(LINE1);
-	printf("  Keys:     %zu bytes each\n", bench.key_len);
-	printf("  Values:   %zu bytes each\n", bench.val_len);
-	printf("  Entries:  %zu\n", bench.entries);
-
-	/*
-	char *info = db_info(bench.db);
-	if( info ) {
-		printf("\nDB Info:\n%s", info);
-		free(info);
-	}
-	*/
+	printf("\n");
+	printf("  Benchmark:    %s\n", bench.name);
+	printf("  Backend:      %s\n", mod_file);
+	printf("  Keys:         %zu bytes each\n", bench.key_len);
+	printf("  Values:       %zu bytes each\n", bench.val_len);
+	printf("  Entries:      %zu\n", bench.entries);
+	printf("  Load:         %d%% READS / %d%% WRITES\n", (int)bench.read_pct, (int)(100-bench.read_pct));
+	printf("\n");
 
 	benchmark_run(&bench);
 	dbz_close(dbz);
+	dbz=NULL;
 	return EXIT_SUCCESS;
 }
