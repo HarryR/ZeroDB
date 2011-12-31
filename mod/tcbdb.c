@@ -48,7 +48,7 @@ DB_OP(do_put){
 	open_db();
 	if( tcbdbput(db, in_data, key_size, in_data+key_size, in_sz-key_size) ) {
 		if(cb) {
-			cb(in_data+key_size, in_sz-key_size, NULL, token);
+			cb(in_data, in_sz, NULL, token);
 		}
 		return in_sz;
 	}
@@ -67,7 +67,7 @@ DB_OP(do_get){
 	open_db();
 
 	int data_sz = 0;
-	char* data = tcbdbget(db, in_data, in_sz, &data_sz);
+	char* data = (char*)tcbdbget(db, in_data, in_sz, &data_sz);
 	if(!data /* || data_sz != (out_sz-in_sz) */){
 		if(cb) cb(in_data, in_sz, NULL, token);
 		return key_size;
@@ -81,7 +81,7 @@ DB_OP(do_get){
 	out_sz += data_sz;
 
 	if(cb){
-		out_data = malloc(out_sz);
+		out_data = (char*)malloc(out_sz);
 		memcpy(out_data, in_data, in_sz);
 		memcpy(out_data+in_sz, data, data_sz);
 		cb(out_data, out_sz, NULL, token);
@@ -108,10 +108,10 @@ DB_OP(do_next){
 
 	open_db();
 	keys = tcbdbrange(db, in_data, in_sz, 0, NULL, 0, 0, 1);
-	const char *next = tclistval(keys, 0, &next_sz);
+	const char *next = (const char*)tclistval(keys, 0, &next_sz);
 	if(tclistnum(keys) == 1 && next && cb){
 		out_sz += next_sz;
-		char *out_data = malloc(out_sz+in_sz);
+		char *out_data = (char*)malloc(out_sz+in_sz);
 		memcpy(out_data, in_data, in_sz);
 		memcpy(out_data+in_sz, next, next_sz);
 		cb(out_data, out_sz, NULL, token);

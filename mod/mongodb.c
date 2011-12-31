@@ -108,7 +108,7 @@ DB_OP(do_get){
 				const char* data = bson_iterator_bin_data(&it);
 				size_t data_sz = bson_iterator_bin_len(&it);
 				size_t out_sz = data_sz + in_sz;
-				char *out_data = malloc(out_sz);
+				char *out_data = (char*)malloc(out_sz);
 				memcpy(out_data, in_data, in_sz);
 				memcpy(out_data+in_sz, data, data_sz);
 				cb(out_data, out_sz, NULL, token);
@@ -153,6 +153,8 @@ DB_OP(do_del){
 
 static
 DB_OP(do_next){
+	size_t ret = in_sz;
+	int rc = 0;
 	bson bquery[1], bout[1];	
 	bson bfields[1];
 
@@ -171,10 +173,10 @@ DB_OP(do_next){
 	  	bson_append_int(bquery, "_id", 1);
 	  bson_append_finish_object(bquery);
 	bson_finish(bquery);
-
-	size_t ret = in_sz;
+	
 	open_db();
-	if( MONGO_OK == mongo_find_one(db, db_collection, bquery, bfields, bout) ) {
+	rc = mongo_find_one(db, db_collection, bquery, bfields, bout);
+	if( MONGO_OK == rc ) {
 		bson_iterator it;
 		bson_iterator_init(&it, bout);
 		if( bson_find(&it, bout, "_id") ) {
@@ -183,7 +185,7 @@ DB_OP(do_next){
 			ret += data_sz;
 			if(cb){
 				size_t out_sz = in_sz + data_sz;
-				char *out_data = malloc(out_sz);
+				char *out_data = (char*)malloc(out_sz);
 				memcpy(out_data, in_data, in_sz);
 				memcpy(out_data+in_sz, data, data_sz);
 				cb(out_data, out_sz, NULL, token);	
