@@ -62,7 +62,7 @@
 #define cycle32(i) (((i) >> 1) ^ (-((i) & 1u) & 0xD0000001u))
 
 struct benchmark {
-	char *name;
+	const char *name;
 	size_t entries;
 	char* key;
 	size_t key_len;
@@ -88,7 +88,7 @@ struct benchmark {
 typedef struct benchmark benchmark_t;
 
 struct benchmark_controller {
-	char* name;
+	const char* name;
 	void (*runner)( struct benchmark* );
 };
 
@@ -156,7 +156,7 @@ DB_OP(count_value){
 }
 
 static void
-benchmark_op(benchmark_t *self, uint32_t count, benchmark_op_t op, char *progress)
+benchmark_op(benchmark_t *self, uint32_t count, benchmark_op_t op, const char *progress)
 {
 	uint32_t i;
 	uint32_t prog_stop = (count / 50);
@@ -215,14 +215,14 @@ static size_t
 bop_read_random(benchmark_t* b) {
 	assert(b != NULL);
 	fill_random(b->key, b->key_len);
-	return b->get(b->key, b->key_len, count_value, NULL);
+	return b->get(b->key, b->key_len, (void*)count_value, NULL);
 }
 
 static size_t
 bop_write_random(benchmark_t* b) {
 	assert(b != NULL);
 	size_t pairsz = b->val_len+b->key_len;
-	char* pair = malloc(pairsz);
+	char* pair = (char*)malloc(pairsz);
 	fill_random(pair, pairsz);
 	size_t ret = b->put(pair, pairsz, NULL, NULL);
 	free(pair);
@@ -233,7 +233,7 @@ static size_t
 bop_write_pseudorand(benchmark_t* b) {
 	assert(b != NULL);
 	size_t pairsz = b->key_len + b->val_len;
-	char* pair = malloc(pairsz);
+	char* pair = (char*)malloc(pairsz);
 	fill_pseudorandom(pair, pairsz, b);
 	size_t retsz = b->put(pair, pairsz, NULL, NULL);
 	free(pair);
@@ -251,7 +251,7 @@ static size_t
 bop_write_sequence(benchmark_t* b) {
 	assert(b != NULL);
 	size_t pair_sz = b->key_len+b->val_len;
-	char* pair = malloc(pair_sz);
+	char* pair = (char*)malloc(pair_sz);
 	int i = b->count % (b->entries/100);
 	memset(pair, 'X', pair_sz);
 	snprintf(pair, b->key_len, "%X", i);
@@ -292,9 +292,9 @@ run_test_rwmix( benchmark_t *b, size_t entries, benchmark_op_t readop_cb, benchm
 	size_t entries_per_run = (entries/runs);
 	assert(b != NULL);
 	assert(readop_cb != NULL);
-	b->key = malloc(b->key_len);
+	b->key = (char*)malloc(b->key_len);
 	memset(b->key, 'X', b->key_len);
-	b->val = malloc(b->val_len);
+	b->val = (char*)malloc(b->val_len);
 	memset(b->val, 'X', b->val_len);
 	for( i = 0; i < runs; i++ ) {
 		if( b->read_pct >= (size_t)(rand() % 100) ) {			
@@ -359,7 +359,7 @@ available_benchmarks[] = {
 
 static bool
 benchmark_validate( benchmark_t *b ) {
-	static char* all = "all";
+	static const char* all = "all";
 	assert(b != NULL);
 	struct benchmark_controller* r = &available_benchmarks[0];
 	if( b->name == NULL ) {
@@ -376,7 +376,7 @@ benchmark_validate( benchmark_t *b ) {
 		}
 	}
 
-	if( r->name == NULL && strcmp("all",b->name) != 0 ) {
+	if( r->name == NULL && strcmp(all,b->name) != 0 ) {
 		warnx("Unknown benchmark name '%s'", b->name);
 		return false;
 	}
@@ -455,16 +455,12 @@ int
 main(int argc, char** argv)
 {
 	int c;
-	benchmark_t bench = {
-		.name = NULL,
-		.read_pct = 50,
-		.entries = 500000,
-		.key_len = 20,
-		.val_len = 100,
-		.put = NULL,
-		.get = NULL,
-		.del = NULL,
-	};
+	benchmark_t bench;
+	memset(&bench, 0, sizeof(bench));
+	bench.read_pct = 50;
+	bench.entries = 500000;
+	bench.key_len = 20;
+	bench.val_len = 100;
 	benchmark_reset(&bench);
 
 	while( (c = getopt(argc, argv, "d:e:k:v:c:r:")) != -1 ) {
@@ -497,23 +493,26 @@ main(int argc, char** argv)
 		mod_file = argv[optind];
 	}
 
-	void* dbz = NULL;
+	dbz* mod = NULL;
 	if( mod_file ) {
-		dbz = dbz_load(mod_file);
-		if( ! dbz ) {
+		mod = dbz_open(mod_file);
+		if( ! mod ) {
 			return EXIT_FAILURE;
 		}
-		struct dbz_op *put_op = dbz_op(dbz, "put"),
-					*get_op = dbz_op(dbz, "get"),
-					*del_op = dbz_op(dbz, "del"),
-					*walk_op = dbz_op(dbz, "walk"),
-					*flush_op = dbz_op(dbz, "flush");
+		
+		{struct dbz_op
+			*put_op = dbz_op(mod, "put"),
+			*get_op = dbz_op(mod, "get"),
+			*del_op = dbz_op(mod, "del"),
+			*walk_op = dbz_op(mod, "walk"),
+			*flush_op = dbz_op(mod, "flush");
 
-		if( put_op ) bench.put = put_op->cb;
-		if( get_op ) bench.get = get_op->cb;
-		if( del_op ) bench.del = del_op->cb;
-		if( walk_op ) bench.walk = walk_op->cb;
-		if( flush_op ) bench.flush = flush_op->cb;
+			if( put_op ) bench.put = put_op->cb;
+			if( get_op ) bench.get = get_op->cb;
+			if( del_op ) bench.del = del_op->cb;
+			if( walk_op ) bench.walk = walk_op->cb;
+			if( flush_op ) bench.flush = flush_op->cb;
+		}
 	}
 	
 	if( ! benchmark_validate(&bench) ) {
@@ -532,7 +531,7 @@ main(int argc, char** argv)
 	printf("\n");
 
 	benchmark_run(&bench);
-	dbz_close(dbz);
-	dbz=NULL;
+	dbz_close(mod);
+	mod=NULL;
 	return EXIT_SUCCESS;
 }

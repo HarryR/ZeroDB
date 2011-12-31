@@ -3,8 +3,17 @@
 
 #include "../i_speak_db.h"
 
-void* dbz_load(const char *filename);
-struct dbz_op* dbz_op(void* _ctx, const char* name);
-int dbz_close(void* _ctx);
+struct dbz_s {
+	int running;
+	void* mod;
+	void* mod_ctx;
+	struct dbz_op* ops;
+};
+typedef struct dbz_s dbz;
+
+dbz* dbz_init(struct dbz_op* ops);
+dbz* dbz_open(const char *filename);
+struct dbz_op* dbz_op(dbz* ctx, const char* name);
+int dbz_close(dbz* ctx);
 
 #endif

@@ -1,6 +1,10 @@
 #ifndef _I_SPEAK_DB
 #define _I_SPEAK_DB
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stddef.h>
 
 typedef size_t (*dbzop_t)(
@@ -21,4 +25,9 @@ typedef struct dbz_op* (*mod_init_fn)();
 
 #define DB_OP(name) size_t name ( char* in_data, size_t in_sz, dbzop_t cb, void* token )
 
+#ifdef __cplusplus
+}  /* end extern "C" */
+#endif
+
+/* _I_SPEAK_DB */
 #endif

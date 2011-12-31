@@ -15,62 +15,99 @@
 
 #include "db-zmq.h"
 
-struct dbz_s {
-	int running;
-	void* mod;
-	void* mod_ctx;
-	struct dbz_op* ops;
-};
-typedef struct dbz_s dbz;
-
-void*
-dbz_load(const char *filename){
-	void *f = NULL;
-	dbz* x = malloc(sizeof(dbz));
+/**
+ * Initialize with set of operations.
+ */
+dbz*
+dbz_init(struct dbz_op* ops){
+	dbz* x = (dbz*)malloc(sizeof(dbz));
+	assert(x != NULL);
 	if(!x) return NULL;
 
 	memset(x, 0, sizeof(dbz));
+	x->ops = ops;
+	return x;
+}
+
+/**
+ * Open a .so file which exports "i_speak_db"
+ * @return Database handle
+ */
+dbz*
+dbz_open(const char *filename){
+	mod_init_fn f = NULL;
+	dbz* x = dbz_init(NULL);
 	x->mod = dlopen(filename, RTLD_LAZY);
 	if( ! x->mod ) {
 		warnx("Cannot dlopen(%p, '%s') = %s", x->mod, filename, dlerror());
 		free(x);
 		return NULL;
 	}
-    f = dlsym(x->mod, "i_speak_db");
+    f = (mod_init_fn)dlsym(x->mod, "i_speak_db");
     if( ! f ) {
     	warnx("Cannot dlsym(%p, 'i_speak_db') = %s", x->mod, dlerror());
     	dlclose(x->mod);
+    	x->mod = NULL;
     	free(x);
     	return NULL;
     }
 
-    x->ops = ((mod_init_fn) f)();
+    x->ops = (struct dbz_op*)f();
     return x;
 }
 
+/**
+ * Find an operation with matching name.
+ *
+ * Human readable type informaion can be appended to
+ * the name when defining an operation.
+ *
+ * Providing just "get" or "put" will match these correctly:
+ *   "get (kN) -> k++vN || k"
+ *   "put (kNvN) -> k++v || k"
+ */
 struct dbz_op*
-dbz_op(void* _ctx, const char* name){
-	dbz* ctx = (dbz*)_ctx;
+dbz_op(dbz* ctx, const char* name) {
 	struct dbz_op* f = ctx->ops;
+	const char *x;
 	while( f->name ) {
 		if( strcmp(f->name, name) == 0 ) {
-			return f;
+			x = f->name + strlen(name);
+			if( *x == 0 || *x == ' ')
+				return f;
 		}
 		f++;
 	}
 	return NULL;
 }
 
+/**
+ * Close handle, unload module
+ */
 int
-dbz_close(void* _ctx){
-	dbz* ctx = (dbz*)_ctx;
+dbz_close(dbz* ctx){
+	assert(ctx != NULL);
 	if( ctx->mod ) dlclose(ctx->mod);
 	memset(ctx, 0, sizeof(dbz));
 	free(ctx);
 	return 1;
 }
 
+#ifdef DBZ_STATIC_MAIN
+#define DBZ_MAIN
+#endif
+
 #ifdef DBZ_MAIN
+
+#ifdef DBZ_STATIC_MAIN
+# ifdef __cplusplus
+   extern "C" {
+# endif
+    extern void* i_speak_db(void);
+# ifdef __cplusplus
+   }
+# endif
+#endif
 
 typedef struct {
 	void *socket;
@@ -91,9 +128,9 @@ reply_cb(void* data, size_t len, void* cb, void* token ) {
 }
 
 static struct dbz_op*
-dbz_bind(void* zctx, void* _ctx, const char* name, const char *addr) {
+dbz_bind(void* zctx, dbz* ctx, const char* name, const char *addr) {
 	void *sock;
-	struct dbz_op* op = dbz_op(_ctx, name);
+	struct dbz_op* op = dbz_op(ctx, name);
 	if( ! op->name ) {
 		warnx("Unknown bind name %s=%s", name, addr);
 		return NULL;
@@ -135,7 +172,7 @@ dbz_run(void* _ctx) {
 		}
 	
 		int rc = zmq_poll(items, fc, /*over*/9001);
-		if( rc >= 0 ) {
+		if( rc > 0 ) {
 			for( i = 0; i < fc; i++ ) {
 				if( items[i].revents & ZMQ_POLLIN ){				
 					zmq_msg_t msg;
@@ -144,7 +181,7 @@ dbz_run(void* _ctx) {
 					int msg_recvd = zmq_recv(items[i].socket, &msg, 0);
 					/* TODO: collect statistics */
 					if( 0 == msg_recvd ) {
-						ctx->ops[i].cb(zmq_msg_data(&msg), zmq_msg_size(&msg), (void*)reply_cb, items[i].socket);
+						ctx->ops[i].cb((const char*)zmq_msg_data(&msg), zmq_msg_size(&msg), (void*)reply_cb, items[i].socket);
 					}
 					zmq_msg_close(&msg);
 				}
@@ -175,15 +212,33 @@ setup_handlers(){
 }
 
 int main(int argc, char **argv) {
-	if( argc < 2 ) {
-		fprintf(stderr, "Usage: %s <module.so> [op=tcp://... ]\n", argv[0]);
+	if( argc < 2 ) {	
+		#ifdef DBZ_STATIC_MAIN
+			fprintf(stderr, "Usage: %s [op=tcp://... ]\n\n", argv[0]);
+			fprintf(stderr, "Example:\n# %s \\\n", argv[0]);
+		#else
+			fprintf(stderr, "Usage: %s <module.so> [op=tcp://... ]\n\n", argv[0]);
+			fprintf(stderr, "Example:\n# %s mod-leveldb.so \\\n", argv[0]);
+		#endif
+
+		fprintf(stderr,
+			"     get=tcp://127.0.0.1:17700  \\\n"
+			"     put=tcp://127.0.0.1:17701  \\\n"
+			"     del=tcp://127.0.0.1:17702  \\\n"
+			"     walk=tcp://127.0.0.1:17703 &\n"
+		);
 		return( EXIT_FAILURE );
 	}
 
 	void *zctx = zmq_init(1);
 	assert(zctx != NULL);
 
-	d = dbz_load(argv[1]);
+	#ifdef DBZ_STATIC_MAIN
+		struct dbz_op *ops = (struct dbz_op*)i_speak_db();
+		d = dbz_init(ops);
+	#else
+		d = dbz_open(argv[1]);
+	#endif
 	if( ! d ) return( EXIT_FAILURE );
 
 	int ok = 0;
