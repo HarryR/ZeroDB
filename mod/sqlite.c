@@ -105,10 +105,11 @@ DB_OP(do_get){
 	if( sqlite3_step(db_get_stmt) == SQLITE_ROW ) {
 		if(cb){
 			out_sz += sqlite3_column_bytes(db_get_stmt, 0);
-			out_data = malloc(out_sz);
+			out_data = (char*)malloc(out_sz);
 			memcpy(out_data, in_data, in_sz);
 			memcpy(out_data+in_sz, sqlite3_column_blob(db_get_stmt, 0), out_sz - in_sz);
-			cb(out_data, out_sz, NULL, token);			
+			cb(out_data, out_sz, NULL, token);
+			free(out_data);			
 		}
 	}
 	else {
@@ -142,7 +143,7 @@ DB_OP(do_next){
 	if( sqlite3_step(db_walk_stmt) == SQLITE_ROW ) {
 		if(cb){
 			out_sz += sqlite3_column_bytes(db_get_stmt, 0);
-			out_data = malloc(out_sz);
+			out_data = (char*)malloc(out_sz);
 			memcpy(out_data, in_data, in_sz);
 			memcpy(out_data+in_sz, sqlite3_column_blob(db_walk_stmt, 0), out_sz - in_sz);
 			cb(out_data, out_sz, NULL, token);			

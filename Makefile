@@ -87,7 +87,6 @@ $(OUT)db-zmq: server/db-zmq.c
 
 ########################################################
 
-# Can't build without patch to db_get
 $(OUT)mod-nessdb.so: mod/nessdb.c server/sha1.c $(NESSDB)/libnessdb.a
 	$(BUILD_MODULE) $@ -I$(NESSDB)/engine $+
 
