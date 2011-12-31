@@ -79,9 +79,6 @@ BENCHMARK: $(MODS) $(MAINS)
 
 ########################################################
 
-$(OUT)db-server: server/db-server.o $(SVR_OBJS:.o=.c)
-	$(CC) $(CFLAGS) -o $@ $+
-
 $(OUT)db-bench: bench/db-bench.c server/db-zmq.c
 	$(CC) $(CFLAGS) -o $@ $+ -ldl
 
