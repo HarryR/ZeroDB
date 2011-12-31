@@ -3,6 +3,13 @@
 
 #include "../i_speak_db.h"
 
+typedef struct {
+	void *socket;
+	uint64_t bytes_in;
+	uint64_t bytes_out;
+	uint64_t calls;
+} dbzmq_socket_t;
+
 struct dbz_s {
 	int running;
 	void* mod;

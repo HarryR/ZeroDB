@@ -18,8 +18,8 @@
 /**
  * Initialize with set of operations.
  */
-dbz*
-dbz_init(struct dbz_op* ops){
+dbz* dbz_init(struct dbz_op* ops)
+{
 	dbz* x = (dbz*)malloc(sizeof(dbz));
 	assert(x != NULL);
 	if(!x) return NULL;
@@ -33,8 +33,8 @@ dbz_init(struct dbz_op* ops){
  * Open a .so file which exports "i_speak_db"
  * @return Database handle
  */
-dbz*
-dbz_open(const char *filename){
+dbz* dbz_open(const char *filename)
+{
 	mod_init_fn f = NULL;
 	dbz* x = dbz_init(NULL);
 	x->mod = dlopen(filename, RTLD_LAZY);
@@ -66,8 +66,8 @@ dbz_open(const char *filename){
  *   "get (kN) -> k++vN || k"
  *   "put (kNvN) -> k++v || k"
  */
-struct dbz_op*
-dbz_op(dbz* ctx, const char* name) {
+struct dbz_op* dbz_op(dbz* ctx, const char* name)
+{
 	struct dbz_op* f = ctx->ops;
 	const char *x;
 	while( f->name ) {
@@ -84,8 +84,8 @@ dbz_op(dbz* ctx, const char* name) {
 /**
  * Close handle, unload module
  */
-int
-dbz_close(dbz* ctx){
+int dbz_close(dbz* ctx)
+{
 	assert(ctx != NULL);
 	if( ctx->mod ) dlclose(ctx->mod);
 	memset(ctx, 0, sizeof(dbz));
@@ -109,26 +109,10 @@ dbz_close(dbz* ctx){
 # endif
 #endif
 
-typedef struct {
-	void *socket;
-	uint64_t bytes_in;
-	uint64_t bytes_out;
-	uint64_t calls;
-} dbzmq_stats_t;
 
-static size_t
-reply_cb(void* data, size_t len, void* cb, void* token ) {
-	zmq_msg_t msg;
-	assert( cb == NULL );
-	zmq_msg_init_size(&msg, len);
-	memcpy(zmq_msg_data(&msg), data, len);
-	zmq_send(token, &msg, 0);
-	zmq_msg_close(&msg);
-	return len;
-}
-
-static struct dbz_op*
-dbz_bind(void* zctx, dbz* ctx, const char* name, const char *addr) {
+static struct dbz_op* dbz_bind(void* zctx, dbz* ctx, const char* name, const char *addr)
+{
+	dbzmq_socket_t *token;
 	void *sock;
 	struct dbz_op* op = dbz_op(ctx, name);
 	if( ! op->name ) {
@@ -144,14 +128,54 @@ dbz_bind(void* zctx, dbz* ctx, const char* name, const char *addr) {
 		warnx("Cannot bind socket '%s': %s", addr, zmq_strerror(zmq_errno()));
 		zmq_close(sock);
 		return NULL;
-	}
-	op->token = sock;
+	}	
+	token = (dbzmq_socket_t*)malloc(sizeof(dbzmq_socket_t));
+	memset(token, 0, sizeof(dbzmq_socket_t));
+	token->socket = sock;
+	op->token = (void*)token;
 	return op;
 }
 
-static int
-dbz_run(void* _ctx) {
-	dbz* ctx = (dbz*)_ctx;
+static size_t reply_cb(const char* data, size_t len, dbzop_t cb, dbzmq_socket_t* token )
+{
+	zmq_msg_t msg;	
+	assert(token->socket);
+	assert(len > 0);
+
+	zmq_msg_init_size(&msg, len);
+	memcpy(zmq_msg_data(&msg), data, len);
+	zmq_send(token->socket, &msg, 0);
+	zmq_msg_close(&msg);
+
+	token->bytes_out += len;
+	if( ! cb )
+		return len;
+
+	return len + cb(data, len, NULL, token);
+}
+
+static void handle_POLLIN(dbzop_t cb, dbzmq_socket_t* token)
+{
+	zmq_msg_t msg;
+	int rc = zmq_msg_init(&msg);
+
+	assert(rc==0);
+	if(rc!=0) return;
+
+	assert(token);
+	assert(token->socket);
+	assert(cb);
+	if( ! zmq_recv(token->socket, &msg, ZMQ_NOBLOCK) ) {
+		token->calls += 1;
+		token->bytes_in += zmq_msg_size(&msg);
+		cb((const char*)zmq_msg_data(&msg), zmq_msg_size(&msg), (void*)reply_cb, token);
+	}
+	zmq_msg_close(&msg);
+}
+
+static int dbz_run(dbz* ctx)
+{
+	assert(ctx);
 	ctx->running = 1;
 	int fc = 0;
 	int i;
@@ -160,12 +184,11 @@ dbz_run(void* _ctx) {
 		fc++;
 	}
 	zmq_pollitem_t items[fc];
-/*	dbzmq_stats_t stats[fc]; */
 
 	while( ctx->running == 1 ) {
 		memset(&items[0], 0, sizeof(zmq_pollitem_t) * fc);
 		for( i = 0; i < fc; i++ ) {
-			items[i].socket = ctx->ops[i].token;
+			items[i].socket = ((dbzmq_socket_t*)(ctx->ops[i].token))->socket;
 			items[i].fd = 0;
 			items[i].events = ZMQ_POLLIN;
 			items[i].revents = 0;
@@ -174,16 +197,8 @@ dbz_run(void* _ctx) {
 		int rc = zmq_poll(items, fc, /*over*/9001);
 		if( rc > 0 ) {
 			for( i = 0; i < fc; i++ ) {
-				if( items[i].revents & ZMQ_POLLIN ){				
-					zmq_msg_t msg;
-					rc = zmq_msg_init(&msg);
-					assert(rc==0);
-					int msg_recvd = zmq_recv(items[i].socket, &msg, 0);
-					/* TODO: collect statistics */
-					if( 0 == msg_recvd ) {
-						ctx->ops[i].cb((const char*)zmq_msg_data(&msg), zmq_msg_size(&msg), (void*)reply_cb, items[i].socket);
-					}
-					zmq_msg_close(&msg);
+				if( items[i].revents & ZMQ_POLLIN ){	
+					handle_POLLIN(ctx->ops[i].cb, (dbzmq_socket_t*)ctx->ops[i].token);
 				}
 			}	
 		}		
@@ -192,10 +207,10 @@ dbz_run(void* _ctx) {
 }
 
 static dbz* d = NULL;
-struct sigaction old_action;
+static struct sigaction old_action;
 
-static void
-ctrl_c_handler(int sig_no){
+static void ctrl_c_handler(int sig_no)
+{
 	if( sig_no == SIGINT ){		
 		d->running += 1;
 		warnx("CTRL-C caught, shutting down\n");
@@ -203,15 +218,16 @@ ctrl_c_handler(int sig_no){
 	}
 }
 
-static void
-setup_handlers(){
+static void setup_handlers()
+{
 	struct sigaction act;
 	memset(&act, 0, sizeof(act));
 	act.sa_handler = &ctrl_c_handler;
 	sigaction(SIGINT, &act, &old_action);
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
 	if( argc < 2 ) {	
 		#ifdef DBZ_STATIC_MAIN
 			fprintf(stderr, "Usage: %s [op=tcp://... ]\n\n", argv[0]);
@@ -227,23 +243,25 @@ int main(int argc, char **argv) {
 			"     del=tcp://127.0.0.1:17702  \\\n"
 			"     walk=tcp://127.0.0.1:17703 &\n"
 		);
+
+		printf("\ndbZMQ version v%.1f\n", VERSION);
 		return( EXIT_FAILURE );
 	}
 
 	void *zctx = zmq_init(1);
+	int i = 1;
 	assert(zctx != NULL);
 
 	#ifdef DBZ_STATIC_MAIN
-		struct dbz_op *ops = (struct dbz_op*)i_speak_db();
-		d = dbz_init(ops);
+		d = dbz_init( (struct dbz_op*)i_speak_db() );
 	#else
 		d = dbz_open(argv[1]);
+		i++;
 	#endif
 	if( ! d ) return( EXIT_FAILURE );
 
 	int ok = 0;
-	int i;
-	for( i = 2; i < argc; i++ ) {
+	for( ; i < argc; i++ ) {
 		char *op = argv[i];
 		char *addr = strchr(op, '=');
 		*addr++ = 0;
@@ -269,7 +287,10 @@ int main(int argc, char **argv) {
 
 	struct dbz_op* f = d->ops;
 	while( f && f->name ) {
-		if( f->token ) zmq_close(f->token);
+		if( f->token ) {
+			dbzmq_socket_t* token = (dbzmq_socket_t*)f->token;
+			zmq_close(token->socket);
+		}
 		f++;
 	}
 	if( zctx ) zmq_term(zctx);
