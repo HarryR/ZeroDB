@@ -1,5 +1,5 @@
 UNAME := $(shell uname)
-DEBUG =	-g -ggdb -DDEBUG
+DEFS = -DPLATFORM=$(UNAME) -DVERSION=1.8
 
 ## ""Goanna Central supports whole program analysis for checking,
 ## e.g., that null pointers are not passed on and dereferenced
@@ -12,11 +12,12 @@ DEBUG =	-g -ggdb -DDEBUG
 
 CC = gcc
 CXX = g++
+DEBUG =	-g -ggdb -DDEBUG 
 
 #CC = clang
 #CXX = clang++
 
-CXXFLAGS = -O0 -ggdb -Wall -Wextra -fPIC $(DEBUG)
+CXXFLAGS = -O0 -ggdb -Wall -Wextra -fPIC $(DEBUG) $(DEFS)
 CFLAGS = -std=c99 $(CXXFLAGS)
 
 BUILD_MODULE = $(CC) $(CFLAGS) -shared -o
@@ -29,12 +30,13 @@ NESSDB=../../nessDB-original/
 
 MODS =	$(OUT)mod-null.so \
 		$(OUT)mod-tcbdb.so \
-		$(OUT)mod-sqlite.so \
 		$(OUT)mod-mongodb.so \
-		$(OUT)mod-leveldb.so
-		# mod-nessdb.so mod-wrendb.so
+		$(OUT)mod-leveldb.so		
+		# Currently not working
+		#$(OUT)mod-sqlite.so
+		#$(OUT)mod-nessdb.so
 
-MAINS = $(OUT)db-zmq $(OUT)db-bench $(OUT)dbz-leveldb
+MAINS = $(OUT)db-zmq $(OUT)db-bench $(OUT)leveldb-zmq
 
 OUT = build/
 
@@ -43,6 +45,7 @@ ALL = $(OUT) $(MAINS) $(MODS)
 all: $(ALL)
 
 $(OUT):
+	echo $(UNAME)
 	mkdir -p $@
 
 release: all
@@ -67,8 +70,12 @@ ANALYZE:
 	#flawfinder *
 
 .PHONY: BENCHMARK
-BENCHMARK: db-bench
-	./db-bench -k 32 -e 5000000 rwmix > $@
+BENCHMARK: $(MODS) $(MAINS)
+	for MOD in $(MODS) ; do ./build/db-bench $$MOD null ; done
+	for MOD in $(MODS) ; do ./build/db-bench $$MOD removewrite-sequence ; done
+	for MOD in $(MODS) ; do ./build/db-bench $$MOD readwrite-sequence ; done
+	for MOD in $(MODS) ; do ./build/db-bench $$MOD readwrite-random ; done
+	for MOD in $(MODS) ; do ./build/db-bench $$MOD readwrite-pseudorandom ; done
 
 ########################################################
 
@@ -102,9 +109,5 @@ $(OUT)mod-mongodb.so: mod/mongodb.c
 $(OUT)mod-leveldb.so: mod/leveldb.c mod/leveldb/libleveldb.a
 	$(CXX) $(CXXFLAGS) -pthread -shared -o $@ $+ -Imod/leveldb/include
 
-$(OUT)mod-wrendb.so: mod/wrendb.c mod/wren/wvm.c
-	$(BUILD_MODULE) $@ $+ -Imod/wren/
-
-
-$(OUT)dbz-leveldb: server/db-zmq.c mod/leveldb.c mod/leveldb/libleveldb.a
+$(OUT)leveldb-zmq: mod/leveldb.c server/db-zmq.c mod/leveldb/libleveldb.a
 	$(CXX) $(CXXFLAGS) -DDBZ_STATIC_MAIN -pthread -o $@ $+ -Imod/leveldb/include -ldl -lzmq
