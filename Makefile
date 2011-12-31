@@ -1,30 +1,40 @@
 UNAME := $(shell uname)
 DEBUG =	-g -ggdb -DDEBUG
 
-# Goanna Studio by http://redlizards.com/
+## ""Goanna Central supports whole program analysis for checking,
+## e.g., that null pointers are not passed on and dereferenced
+## in other functions and automatically tracks potential ranges
+## of variables, detecting possible buffer overflows.""
+## - http://redlizards.com/ 
+#
 #CC = goannacc --all-checks
+#CXX = goannac++ --all-checks
 
 CC = gcc
-CFLAGS = -std=c99 -O0 -ggdb -Wall -Wextra -fPIC $(DEBUG)	
+CXX = g++
+
+#CC = clang
+#CXX = clang++
+
+CXXFLAGS = -O0 -ggdb -Wall -Wextra -fPIC $(DEBUG)
+CFLAGS = -std=c99 $(CXXFLAGS)
 
 BUILD_MODULE = $(CC) $(CFLAGS) -shared -o
 STRIP_EXE = strip -s -R .note -R .comment
-STRIP_MODULE = strip -s -R .note -R .comment -K i_speak_db
-
-SVR_OBJS = \
-	./server/ae.o \
-	./server/anet.o \
-	./server/request.o \
-	./server/response.o \
-	./server/zmalloc.o \
+STRIP_MODULE = strip -R .note -R .comment -K i_speak_db -s
 
 BENCH_OBJS = ./bench/db-bench.c
 
 NESSDB=../../nessDB-original/
-WREN=
 
-MODS = $(OUT)mod-null.so $(OUT)mod-tcbdb.so $(OUT)mod-sqlite.so # mod-nessdb.so  $(OUT)mod-mongodb.so
-MAINS = $(OUT)db-zmq $(OUT)db-bench # db-server
+MODS =	$(OUT)mod-null.so \
+		$(OUT)mod-tcbdb.so \
+		$(OUT)mod-sqlite.so \
+		$(OUT)mod-mongodb.so \
+		$(OUT)mod-leveldb.so
+		# mod-nessdb.so mod-wrendb.so
+
+MAINS = $(OUT)db-zmq $(OUT)db-bench $(OUT)dbz-leveldb
 
 OUT = build/
 
@@ -48,15 +58,11 @@ clean:
 cleandb:
 	-rm -rf ndbs database.tcbdb.dat sqlite3.dat
 
-$(LIBRARY): $(LIB_OBJS)
-	@rm -f $@
-	@$(AR) -rs $@ $(LIB_OBJS)
-	@rm -f $(LIB_OBJS)
-
 .PHONY: analyze
 ANALYZE:
 	cppcheck -q .
-	# Both 'rats' and 'flawfinder' are relatively useless
+	## Both 'rats' and 'flawfinder' are overly verbose
+	## Hard to use with all the default checks enabled.
 	#rats .
 	#flawfinder *
 
@@ -64,15 +70,20 @@ ANALYZE:
 BENCHMARK: db-bench
 	./db-bench -k 32 -e 5000000 rwmix > $@
 
-$(OUT)db-server: server/db-server.o $(SVR_OBJS:.o=.c) $(LIB_OBJS:.o=.c)
+########################################################
+
+$(OUT)db-server: server/db-server.o $(SVR_OBJS:.o=.c)
 	$(CC) $(CFLAGS) -o $@ $+
 
-$(OUT)db-bench: bench/db-bench.c server/db-zmq.c $(LIB_OBJS:.o=.c)
+$(OUT)db-bench: bench/db-bench.c server/db-zmq.c
 	$(CC) $(CFLAGS) -o $@ $+ -ldl
 
-$(OUT)db-zmq: server/db-zmq.c $(LIB_OBJS:.o=.c)
+$(OUT)db-zmq: server/db-zmq.c
 	$(CC) $(CFLAGS) -DDBZ_MAIN -o $@ $+ -lzmq -ldl
 
+########################################################
+
+# Can't build without patch to db_get
 $(OUT)mod-nessdb.so: mod/nessdb.c server/sha1.c $(NESSDB)/libnessdb.a
 	$(BUILD_MODULE) $@ -I$(NESSDB)/engine $+
 
@@ -82,11 +93,18 @@ $(OUT)mod-null.so: mod/null.c
 $(OUT)mod-tcbdb.so: mod/tcbdb.c
 	$(BUILD_MODULE) $@ $+ -ltokyocabinet
 
-$(OUT)mod-wrendb.so: mod/wrendb.c mod/wren/wvm.c
-	$(BUILD_MODULE) $@ $+
-
 $(OUT)mod-sqlite.so: mod/sqlite.c -lsqlite3
 	$(BUILD_MODULE) $@ $+
 
 $(OUT)mod-mongodb.so: mod/mongodb.c
-	$(BUILD_MODULE) $@ $+ -Imod/mongo-c-driver/src mod/mongo-c-driver/libbson.a mod/mongo-c-driver/libmongoc.a
+	$(BUILD_MODULE) $@ $+ -DMONGO_HAVE_STDINT -Imod/mongo-c-driver/src mod/mongo-c-driver/libbson.a mod/mongo-c-driver/libmongoc.a
+
+$(OUT)mod-leveldb.so: mod/leveldb.c mod/leveldb/libleveldb.a
+	$(CXX) $(CXXFLAGS) -pthread -shared -o $@ $+ -Imod/leveldb/include
+
+$(OUT)mod-wrendb.so: mod/wrendb.c mod/wren/wvm.c
+	$(BUILD_MODULE) $@ $+ -Imod/wren/
+
+
+$(OUT)dbz-leveldb: server/db-zmq.c mod/leveldb.c mod/leveldb/libleveldb.a
+	$(CXX) $(CXXFLAGS) -DDBZ_STATIC_MAIN -pthread -o $@ $+ -Imod/leveldb/include -ldl -lzmq
