@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <err.h>
+#include <assert.h>
 #include "../i_speak_db.h"
 
 #include "mongo.h"
@@ -186,8 +187,9 @@ DB_OP(do_next){
 			if(cb){
 				size_t out_sz = in_sz + data_sz;
 				char *out_data = (char*)malloc(out_sz);
+				assert( (out_sz - in_sz) == data_sz );
 				memcpy(out_data, in_data, in_sz);
-				memcpy(out_data+in_sz, data, data_sz);
+				memcpy(out_data + in_sz, data, out_sz - in_sz);
 				cb(out_data, out_sz, NULL, token);	
 				free(out_data);
 			}

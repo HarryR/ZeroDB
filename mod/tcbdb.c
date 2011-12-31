@@ -63,12 +63,12 @@ static
 DB_OP(do_get){
 	size_t out_sz = in_sz;
 	char *out_data = NULL;
+	int data_sz = 0;
+	char* data;
 	
 	open_db();
-
-	int data_sz = 0;
-	char* data = (char*)tcbdbget(db, in_data, in_sz, &data_sz);
-	if(!data /* || data_sz != (out_sz-in_sz) */){
+	data = (char*)tcbdbget(db, in_data, in_sz, &data_sz);
+	if(!data){
 		if(cb) cb(in_data, in_sz, NULL, token);
 		return key_size;
 	}
@@ -79,7 +79,6 @@ DB_OP(do_get){
 	 * +---------+-----------+
 	 */
 	out_sz += data_sz;
-
 	if(cb){
 		out_data = (char*)malloc(out_sz);
 		memcpy(out_data, in_data, in_sz);
@@ -126,8 +125,8 @@ DB_OP(do_next){
 	return out_sz;
 }
 
-void*
-i_speak_db(void){
+void* i_speak_db(void)
+{
 	static struct dbz_op ops[] = {
 		{"put", 0, (dbzop_t)do_put, NULL},
 		{"get", 1, (dbzop_t)do_get, NULL},

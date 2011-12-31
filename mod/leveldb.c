@@ -63,8 +63,11 @@ DB_OP(do_put){
 	size_t ret_sz;
 	char *dberr = NULL;
 
-	if(in_sz<=key_size)
+	if(in_sz<=key_size) {
+		if(cb)
+			cb(in_data, in_sz, NULL, token);		
 		return 0;
+	}
 
 	open_db();
 	leveldb_put(db, db_woptions,
