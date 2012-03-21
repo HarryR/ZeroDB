@@ -1,3 +1,9 @@
 [submodule "mod/mongo-c-driver"]
 	path = mod/mongo-c-driver
 	url = https://github.com/mongodb/mongo-c-driver.git
+[submodule "mod/nessdb"]
+	path = mod/nessdb
+	url = https://github.com/shuttler/nessDB.git
+[submodule "mod/leveldb"]
+	path = mod/leveldb
+	url = https://github.com/dizzyd/leveldb.git

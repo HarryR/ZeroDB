@@ -11,7 +11,6 @@ i_speak_db(void){
 		{"put", 0, (dbzop_t)nullop_null, NULL},
 		{"get", 1, (dbzop_t)nullop_null, NULL},
 		{"del", 0, (dbzop_t)nullop_null, NULL},
-		{"walk", 0, (dbzop_t)nullop_null, NULL},
 		{NULL, 0, 0, 0}
 	};
 	return &ops;

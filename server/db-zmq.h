@@ -1,8 +1,6 @@
 #ifndef _DB_ZMQ_H
 #define _DB_ZMQ_H
 
-#include "../i_speak_db.h"
-
 typedef struct {
 	void *socket;
 	uint64_t bytes_in;

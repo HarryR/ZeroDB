@@ -152,71 +152,12 @@ DB_OP(do_del){
 	return ret;
 }
 
-static
-DB_OP(do_next){
-	size_t ret = in_sz;
-	int rc = 0;
-	bson bquery[1], bout[1];	
-	bson bfields[1];
-
-	bson_init(bfields);
-	  bson_append_int(bfields, "_id", 1);
-	bson_finish(bfields);
-
-	bson_init(bquery);
-	  bson_append_start_object(bquery, "$query");
-	    bson_append_start_object(bquery, "_id");
-	      bson_append_binary(bquery, "$gt", BSON_BIN_BINARY, in_data, in_sz);
-	    bson_append_finish_object(bquery);
-	  bson_append_finish_object(bquery);
-
-	  bson_append_start_object(bquery, "$orderby");
-	  	bson_append_int(bquery, "_id", 1);
-	  bson_append_finish_object(bquery);
-	bson_finish(bquery);
-	
-	open_db();
-	rc = mongo_find_one(db, db_collection, bquery, bfields, bout);
-	if( MONGO_OK == rc ) {
-		bson_iterator it;
-		bson_iterator_init(&it, bout);
-		if( bson_find(&it, bout, "_id") ) {
-			const char* data = bson_iterator_bin_data(&it);
-			size_t data_sz = bson_iterator_bin_len(&it);
-			ret += data_sz;
-			if(cb){
-				size_t out_sz = in_sz + data_sz;
-				char *out_data = (char*)malloc(out_sz);
-				assert( (out_sz - in_sz) == data_sz );
-				memcpy(out_data, in_data, in_sz);
-				memcpy(out_data + in_sz, data, out_sz - in_sz);
-				cb(out_data, out_sz, NULL, token);	
-				free(out_data);
-			}
-		}
-		else{
-			if( cb )
-				cb(in_data, in_sz, NULL, token);
-		}
-		bson_destroy(bout);
-	}
-	else {
-		if( cb )
-			cb(in_data, in_sz, NULL, token);
-	}
-	bson_destroy(bquery);
-	bson_destroy(bfields);
-
-	return ret;
-}
-
 void*
 i_speak_db(void){
 	static struct dbz_op ops[] = {
 		{"put", 0, (dbzop_t)do_put, NULL},
 		{"get", 1, (dbzop_t)do_get, NULL},
 		{"del", 0, (dbzop_t)do_del, NULL},
-		{"walk", 1, (dbzop_t)do_next, NULL},
 		{NULL, 0, 0, 0}
 	};
 	return &ops;

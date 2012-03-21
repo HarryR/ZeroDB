@@ -133,39 +133,6 @@ DB_OP(do_del){
 	return in_sz;
 }
 
-static
-DB_OP(do_next){
-	leveldb_iterator_t *it = NULL;
-	char *out_data = NULL;
-	const char *next_key = NULL;
-	size_t next_key_sz = 0;
-	size_t ret_sz = 0;
-
-	open_db();
-	it = leveldb_create_iterator(db, db_roptions);
-	leveldb_iter_seek(it, in_data, in_sz);
-	leveldb_iter_next(it);
-
-	if( leveldb_iter_valid(it) ) {
-		next_key = leveldb_iter_key(it, &next_key_sz);
-		assert(next_key != NULL);
-
-		ret_sz = in_sz + next_key_sz;
-		out_data = (char*)malloc(ret_sz);
-		memcpy(out_data, in_data, in_sz);
-		memcpy(out_data+in_sz, next_key, next_key_sz);
-		cb(out_data, ret_sz, NULL, token);
-		free(out_data);
-	}
-	else {
-		if( cb )
-			cb(in_data, in_sz, NULL, token);
-	}
-	leveldb_iter_destroy(it);
-
-	return ret_sz;
-}
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -175,7 +142,6 @@ extern "C" {
 			{"put", 0, (dbzop_t)do_put, NULL},
 			{"get", 1, (dbzop_t)do_get, NULL},
 			{"del", 0, (dbzop_t)do_del, NULL},
-			{"walk", 1, (dbzop_t)do_next, NULL},
 			{NULL, 0, 0, 0}
 		};
 		return &ops;

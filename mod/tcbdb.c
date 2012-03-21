@@ -99,39 +99,12 @@ DB_OP(do_del){
 	return in_sz;
 }
 
-static
-DB_OP(do_next){
-	TCLIST *keys;
-	size_t out_sz = in_sz;
-	int next_sz = 0;
-
-	open_db();
-	keys = tcbdbrange(db, in_data, in_sz, 0, NULL, 0, 0, 1);
-	const char *next = (const char*)tclistval(keys, 0, &next_sz);
-	if(tclistnum(keys) == 1 && next && cb){
-		out_sz += next_sz;
-		char *out_data = (char*)malloc(out_sz+in_sz);
-		memcpy(out_data, in_data, in_sz);
-		memcpy(out_data+in_sz, next, next_sz);
-		cb(out_data, out_sz, NULL, token);
-		free(out_data);
-	}
-	else {
-		if(cb)
-			cb(in_data, in_sz, NULL, token);	
-	}
-
-	tclistdel(keys);
-	return out_sz;
-}
-
 void* i_speak_db(void)
 {
 	static struct dbz_op ops[] = {
 		{"put", 0, (dbzop_t)do_put, NULL},
 		{"get", 1, (dbzop_t)do_get, NULL},
 		{"del", 0, (dbzop_t)do_del, NULL},
-		{"walk", 1, (dbzop_t)do_next, NULL},
 		{NULL, 0, 0, 0}
 	};
 	return &ops;

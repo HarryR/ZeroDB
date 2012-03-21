@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 #include "db-zmq.h"
+#include "../i_speak_db.h"
 
 /**
  * Initialize with set of operations.
@@ -63,8 +64,8 @@ dbz* dbz_open(const char *filename)
  * the name when defining an operation.
  *
  * Providing just "get" or "put" will match these correctly:
- *   "get (kN) -> k++vN || k"
- *   "put (kNvN) -> k++v || k"
+ *   "get (kN) -> k ++ vN || k"
+ *   "put (kNvN) -> k ++ v || k"
  */
 struct dbz_op* dbz_op(dbz* ctx, const char* name)
 {
@@ -93,34 +94,31 @@ int dbz_close(dbz* ctx)
 	return 1;
 }
 
-#ifdef DBZ_STATIC_MAIN
-#define DBZ_MAIN
-#endif
-
-#ifdef DBZ_MAIN
-
-#ifdef DBZ_STATIC_MAIN
-# ifdef __cplusplus
-   extern "C" {
-# endif
-    extern void* i_speak_db(void);
-# ifdef __cplusplus
-   }
-# endif
-#endif
-
-
 static struct dbz_op* dbz_bind(void* zctx, dbz* ctx, const char* name, const char *addr)
 {
 	dbzmq_socket_t *token;
 	void *sock;
+	int sock_type;
 	struct dbz_op* op = dbz_op(ctx, name);
 	if( ! op->name ) {
 		warnx("Unknown bind name %s=%s", name, addr);
 		return NULL;
 	}
 
-	if( (sock = zmq_socket(zctx, op->opts ? ZMQ_REP : ZMQ_PULL)) == NULL ) {
+	if( strncmp(addr, "pull@", 5) == 0 ) {
+		sock_type = ZMQ_PULL;
+		addr += 5;
+	}
+	else if( strncmp(addr, "rep@", 4) == 0 ) {
+		sock_type = ZMQ_REP;
+		addr += 4;
+	}
+	else {
+		warnx("Unknown bind type %s=%s", name, addr);
+		return NULL;
+	}
+
+	if( (sock = zmq_socket(zctx, sock_type)) == NULL ) {
 		warnx("Cannot create socket for '%s': %s", addr, zmq_strerror(zmq_errno()));	
 		return NULL;;
 	} 
@@ -228,40 +226,29 @@ static void setup_handlers()
 
 int main(int argc, char **argv)
 {
-	if( argc < 2 ) {	
-		#ifdef DBZ_STATIC_MAIN
-			fprintf(stderr, "Usage: %s [op=tcp://... ]\n\n", argv[0]);
-			fprintf(stderr, "Example:\n# %s \\\n", argv[0]);
-		#else
-			fprintf(stderr, "Usage: %s <module.so> [op=tcp://... ]\n\n", argv[0]);
-			fprintf(stderr, "Example:\n# %s mod-leveldb.so \\\n", argv[0]);
-		#endif
+	int i, ok;
+	void *zctx;
 
+	if( argc < 2 ) {	
+		fprintf(stderr, "Usage: %s <module.so> [op=tcp://... ]\n\n", argv[0]);
+		fprintf(stderr, "Example:\n# %s mod-leveldb.so \\\n", argv[0]);
 		fprintf(stderr,
-			"     get=tcp://127.0.0.1:17700  \\\n"
-			"     put=tcp://127.0.0.1:17701  \\\n"
-			"     del=tcp://127.0.0.1:17702  \\\n"
-			"     walk=tcp://127.0.0.1:17703 &\n"
+			"     get=rep@tcp://127.0.0.1:17700 \\\n"
+			"     put=pull@tcp://127.0.0.1:17701 \\\n"
+			"     del=pull@tcp://127.0.0.1:17702 &\n"
 		);
 
 		printf("\ndbZMQ version v%.1f\n", VERSION);
 		return( EXIT_FAILURE );
-	}
+	}	
 
-	void *zctx = zmq_init(1);
-	int i = 1;
-	assert(zctx != NULL);
-
-	#ifdef DBZ_STATIC_MAIN
-		d = dbz_init( (struct dbz_op*)i_speak_db() );
-	#else
-		d = dbz_open(argv[1]);
-		i++;
-	#endif
+	d = dbz_open(argv[1]);
 	if( ! d ) return( EXIT_FAILURE );
 
-	int ok = 0;
-	for( ; i < argc; i++ ) {
+	zctx = zmq_init(1);
+	assert(zctx != NULL);
+
+	for( i = 2 ; i < argc; i++ ) {
 		char *op = argv[i];
 		char *addr = strchr(op, '=');
 		*addr++ = 0;
@@ -298,5 +285,3 @@ int main(int argc, char **argv)
 	return( EXIT_SUCCESS );
 }
 
-/* DBZ_MAIN */
-#endif

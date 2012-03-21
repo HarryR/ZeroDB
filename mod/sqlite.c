@@ -3,35 +3,33 @@
 #include <stdint.h>
 #include <string.h>
 #include <err.h>
+#include <unistd.h>
 #include <sqlite3.h>
+
 #include "../i_speak_db.h"
 
 static sqlite3* db = NULL;
 static sqlite3_stmt* db_put_stmt = NULL;
 static sqlite3_stmt* db_get_stmt = NULL;
 static sqlite3_stmt* db_del_stmt = NULL;
-static sqlite3_stmt* db_walk_stmt = NULL;
 
 static size_t key_size = -1;
 
 static const char init_sql[] = "CREATE TABLE kv(k BLOB PRIMARY KEY, v BLOB)";
 static const char get_sql[]  = "SELECT v FROM kv WHERE k = ? LIMIT 1";
-static const char walk_sql[] = "SELECT v FROM kv WHERE k > ? LIMIT 1";
 static const char put_sql[]  = "INSERT INTO kv VALUES (?,?)";
 static const char del_sql[]  = "DELETE FROM kv WHERE k = ? LIMIT 1";
 
 static void
 close_db(){
-	int rc;
 	if(db){
 		/* TODO: validate return codes. */
 		sqlite3_finalize(db_put_stmt);
 		sqlite3_finalize(db_get_stmt);
 		sqlite3_finalize(db_del_stmt);
-		sqlite3_finalize(db_walk_stmt);
-		do {
-			rc = sqlite3_close(db);
-		} while(rc == SQLITE_BUSY);
+		while( sqlite3_close(db) == SQLITE_BUSY ) {
+			sleep(1);
+		}
 		db = NULL;
 	}
 }
@@ -64,7 +62,6 @@ open_db() {
 			sqlite3_prepare_v2(db, get_sql, -1, &db_get_stmt, 0);
 			sqlite3_prepare_v2(db, put_sql, -1, &db_put_stmt, 0);
 			sqlite3_prepare_v2(db, del_sql, -1, &db_del_stmt, 0);
-			sqlite3_prepare_v2(db, walk_sql, -1, &db_walk_stmt, 0);
 			atexit(close_db);
 		}
 	}
@@ -132,37 +129,12 @@ DB_OP(do_del){
 	return in_sz;
 }
 
-static
-DB_OP(do_next){
-	size_t out_sz = in_sz;
-	char *out_data = NULL;
-	
-	open_db();
-
-	sqlite3_bind_blob(db_walk_stmt, 1, in_data, in_sz, SQLITE_STATIC);	
-	if( sqlite3_step(db_walk_stmt) == SQLITE_ROW ) {
-		if(cb){
-			out_sz += sqlite3_column_bytes(db_get_stmt, 0);
-			out_data = (char*)malloc(out_sz);
-			memcpy(out_data, in_data, in_sz);
-			memcpy(out_data+in_sz, sqlite3_column_blob(db_walk_stmt, 0), out_sz - in_sz);
-			cb(out_data, out_sz, NULL, token);			
-		}
-	}
-	else {
-		if(cb) cb(in_data, in_sz, NULL, token);
-	}
-	sqlite3_reset(db_walk_stmt);
-	return out_sz;
-}
-
 void*
 i_speak_db(void){
 	static struct dbz_op ops[] = {
 		{"put", 0, (dbzop_t)do_put, NULL},
 		{"get", 1, (dbzop_t)do_get, NULL},
 		{"del", 0, (dbzop_t)do_del, NULL},
-		{"walk", 1, (dbzop_t)do_next, NULL},
 		{NULL, 0, 0, 0}
 	};
 	return &ops;

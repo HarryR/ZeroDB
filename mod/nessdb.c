@@ -45,16 +45,6 @@ DB_OP(nessdb_put){
 
 	open_db();
 
-	#if 0
-	sha1nfo data_hash;
-	// The key should be unique to the database
-	// k = {∃! k ∈ DB|SHA1(in_data)}
-	sha1_init(&data_hash);
-	sha1_write(&data_hash, in_data, in_sz);
-	sk.data = (char*)sha1_result(&data_hash);
-	sk.len = key_size;
-	#endif
-
 	if( db_add(db, &sk, &sv) ) {		
 		out_sz = in_sz;
 	}
@@ -73,8 +63,7 @@ DB_OP(nessdb_get){
 	struct slice sk = {in_data, in_sz};
 	struct slice sv = {NULL, 0};
 	size_t ret = in_sz;
-	sv.len = db_get(db, &sk, &sv);
-	if( sv.len && sv.data ) {
+	if( db_get(db, &sk, &sv) && sv.len && sv.data ) {
 		if(cb) {
 			struct slice out = {malloc(sk.len+sv.len), sk.len+sv.len};
 			memcpy(out.data, in_data, in_sz);
@@ -101,30 +90,12 @@ DB_OP(nessdb_del){
 	return in_sz;
 }
 
-DB_OP(nessdb_walk){	
-	if(cb){
-		cb(in_data, in_sz, NULL, token);
-	}
-	return in_sz;
-
-	// Unsupported by DB layer
-	/*
-	open_db();
-	struct slice sk = {in_data, in_sz};
-	struct slice sv = {NULL, 0};
-	if( db_next(db, &sk, &sv) ) {
-		// TODO: construct buffer & return
-	}
-	*/
-}
-
 void*
 i_speak_db(void){
 	static struct dbz_op ops[] = {
 		{"put", 0, (dbzop_t)nessdb_put, NULL},
 		{"get", 1, (dbzop_t)nessdb_get, NULL},
 		{"del", 0, (dbzop_t)nessdb_del, NULL},
-		{"walk", 0, (dbzop_t)nessdb_walk, NULL},
 		{NULL, 0, 0, 0}
 	};
 	return &ops;

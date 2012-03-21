@@ -22,21 +22,18 @@ CFLAGS = -std=c99 $(CXXFLAGS)
 
 BUILD_MODULE = $(CC) $(CFLAGS) -shared -o
 STRIP_EXE = strip -s -R .note -R .comment
-STRIP_MODULE = strip -R .note -R .comment -K i_speak_db -s
+STRIP_MODULE = strip -R .note -R .comment -s --strip-unneeded -K i_speak_db
 
-BENCH_OBJS = ./bench/db-bench.c
-
-NESSDB=../../nessDB-original/
+#BENCH_OBJS = ./bench/db-bench.c
 
 MODS =	$(OUT)mod-null.so \
 		$(OUT)mod-tcbdb.so \
 		$(OUT)mod-mongodb.so \
-		$(OUT)mod-leveldb.so		
-		# Currently not working
-		#$(OUT)mod-sqlite.so
-		#$(OUT)mod-nessdb.so
+		$(OUT)mod-leveldb.so \
+		$(OUT)mod-nessdb.so \
+		$(OUT)mod-sqlite.so
 
-MAINS = $(OUT)db-zmq $(OUT)db-bench $(OUT)leveldb-zmq
+MAINS = $(OUT)db-zmq #$(OUT)db-bench
 
 OUT = build/
 
@@ -45,7 +42,6 @@ ALL = $(OUT) $(MAINS) $(MODS)
 all: $(ALL)
 
 $(OUT):
-	echo $(UNAME)
 	mkdir -p $@
 
 release: all
@@ -57,17 +53,16 @@ clean:
 	-rm -rf $(OUT)
 	-rm -f $(ALL)
 	-rm -f bench/*.o server/*.o mod/*.o
+	scons -C mod/mongo-c-driver/ -c
+	make -C mod/leveldb/ clean
+	make -C mod/nessdb/ clean
 
 cleandb:
 	-rm -rf ndbs database.tcbdb.dat sqlite3.dat
 
-.PHONY: analyze
+.PHONY: ANALYZE
 ANALYZE:
-	cppcheck -q .
-	## Both 'rats' and 'flawfinder' are overly verbose
-	## Hard to use with all the default checks enabled.
-	#rats .
-	#flawfinder *
+	cppcheck --enable=all -q server/*.c mod/*.c
 
 .PHONY: BENCHMARK
 BENCHMARK: $(MODS) $(MAINS)
@@ -87,8 +82,11 @@ $(OUT)db-zmq: server/db-zmq.c
 
 ########################################################
 
-$(OUT)mod-nessdb.so: mod/nessdb.c server/sha1.c $(NESSDB)/libnessdb.a
-	$(BUILD_MODULE) $@ -I$(NESSDB)/engine $+
+$(OUT)mod-nessdb.so: mod/nessdb.c mod/nessdb/libnessdb.a
+	$(BUILD_MODULE) $@ -Imod/nessdb/engine $+
+
+mod/nessdb/libnessdb.a:
+	CFLAGS="-fPIC" make -C mod/nessdb
 
 $(OUT)mod-null.so: mod/null.c
 	$(BUILD_MODULE) $@ $+
@@ -99,11 +97,14 @@ $(OUT)mod-tcbdb.so: mod/tcbdb.c
 $(OUT)mod-sqlite.so: mod/sqlite.c -lsqlite3
 	$(BUILD_MODULE) $@ $+
 
-$(OUT)mod-mongodb.so: mod/mongodb.c
+$(OUT)mod-mongodb.so: mod/mongodb.c mod/mongo-c-driver/libmongoc.a
 	$(BUILD_MODULE) $@ $+ -DMONGO_HAVE_STDINT -Imod/mongo-c-driver/src mod/mongo-c-driver/libbson.a mod/mongo-c-driver/libmongoc.a
+
+mod/mongo-c-driver/libmongoc.a:
+	scons -C mod/mongo-c-driver CFLAGS="-fPIC"
 
 $(OUT)mod-leveldb.so: mod/leveldb.c mod/leveldb/libleveldb.a
 	$(CXX) $(CXXFLAGS) -pthread -shared -o $@ $+ -Imod/leveldb/include
 
-$(OUT)leveldb-zmq: mod/leveldb.c server/db-zmq.c mod/leveldb/libleveldb.a
-	$(CXX) $(CXXFLAGS) -DDBZ_STATIC_MAIN -pthread -o $@ $+ -Imod/leveldb/include -ldl -lzmq
+mod/leveldb/libleveldb.a:
+	make -C mod/leveldb
